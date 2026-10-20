@@ -169,3 +169,18 @@ def test_browse_reads_cover_art(library, tmp_path):
     rb.sync(library.root)
     first = rb.browse().tracks[0]
     assert first.artwork is None and embedded_art(mount / first.location.lstrip("/"))
+
+
+def test_finds_unmounted_ipod_volumes():
+    from clickwheel.devices import unmounted_ipod_volumes
+
+    shuffle = {"name": "sda", "path": "/dev/sda", "fstype": "vfat", "mountpoint": None,
+               "vendor": "Apple   ", "model": "iPod", "tran": "usb", "type": "disk"}
+    classic = {"name": "sdb", "path": "/dev/sdb", "fstype": None, "mountpoint": None, "vendor": "Apple",
+               "model": "iPod", "tran": "usb", "type": "disk", "children": [
+                   {"name": "sdb1", "path": "/dev/sdb1", "fstype": None, "mountpoint": None},
+                   {"name": "sdb2", "path": "/dev/sdb2", "fstype": "vfat", "mountpoint": None}]}
+    mounted = {**shuffle, "name": "sdc", "path": "/dev/sdc", "mountpoint": "/run/media/u/IPOD"}
+    usb_stick = {**shuffle, "name": "sdd", "path": "/dev/sdd", "vendor": "SanDisk", "model": "Cruzer"}
+    data = {"blockdevices": [shuffle, classic, mounted, usb_stick]}
+    assert unmounted_ipod_volumes(data) == ["/dev/sda", "/dev/sdb2"]
