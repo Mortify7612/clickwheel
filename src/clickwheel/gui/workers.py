@@ -77,16 +77,22 @@ class DownloadManager(QObject):
         super().__init__()
         self.library = library
         self.settings = settings
-        self._queue: queue.Queue[tuple[str, str, str]] = queue.Queue()
+        self._queue: queue.Queue[tuple[str, str, str, str | None]] = queue.Queue()
         self._pipeline: Pipeline | None = None
         self._cancel_all = threading.Event()
         threading.Thread(target=self._loop, daemon=True).start()
 
-    def enqueue_url(self, url: str) -> None:
-        self._queue.put(("url", url, url))
+    # ``profile_id`` None means "whichever profile is active right now".
+    def enqueue_url(self, url: str, profile_id: str | None = None) -> None:
+        self._queue.put(("url", url, url, profile_id or self._active_id()))
 
-    def enqueue_playlist(self, playlist_id: str, title: str) -> None:
-        self._queue.put(("playlist", playlist_id, title))
+    def enqueue_playlist(self, playlist_id: str, title: str, profile_id: str | None = None) -> None:
+        self._queue.put(("playlist", playlist_id, title, profile_id or self._active_id()))
+
+    @staticmethod
+    def _active_id() -> str | None:
+        profile = auth.active_profile()
+        return profile.id if profile else None
 
     def cancel(self) -> None:
         self._cancel_all.set()
@@ -98,17 +104,19 @@ class DownloadManager(QObject):
         if self._pipeline:
             self._pipeline.cancel()
 
-    def _resolver(self) -> Resolver:
-        return Resolver(auth.client(), cover_size=self.settings.cover_size,
+    def _resolver(self, profile: auth.Profile | None) -> Resolver:
+        return Resolver(auth.client(profile), cover_size=self.settings.cover_size,
                         prefer_album_versions=self.settings.prefer_album_versions)
 
     def _loop(self) -> None:
         while True:
-            kind, ident, label = self._queue.get()
+            kind, ident, label, profile_id = self._queue.get()
+            # A profile removed while its download was queued falls back to the active one.
+            profile = auth.get_profile(profile_id) or auth.active_profile()
             self._cancel_all.clear()
             try:
                 self.resolving.emit(label)
-                resolver = self._resolver()
+                resolver = self._resolver(profile)
                 collection: Collection = (
                     resolver.resolve_url(ident) if kind == "url" else resolver.playlist_collection(ident)
                 )
@@ -116,7 +124,9 @@ class DownloadManager(QObject):
                     continue
                 self.started.emit(collection)
                 self._pipeline = Pipeline(self.library, workers=self.settings.parallel_downloads,
-                                          cover_size=self.settings.cover_size)
+                                          cover_size=self.settings.cover_size,
+                                          cookies=auth.cookies_file(profile),
+                                          profile_id=profile.id if profile else "")
                 counts = self._pipeline.run(collection, self._on_event)
                 self.finished.emit(collection, counts)
                 self.library_changed.emit()

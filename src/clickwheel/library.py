@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS playlists (
     title      TEXT NOT NULL,
     kind       TEXT NOT NULL,
     url        TEXT NOT NULL DEFAULT '',
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    profile    TEXT NOT NULL DEFAULT ''  -- saved YouTube profile it came from
 );
 CREATE TABLE IF NOT EXISTS playlist_items (
     playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
@@ -66,6 +67,7 @@ class LibraryPlaylist:
     kind: str
     url: str
     track_count: int
+    profile: str = ""
 
 
 class Library:
@@ -78,6 +80,9 @@ class Library:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.executescript(SCHEMA)
+        columns = {r[1] for r in self._db.execute("PRAGMA table_info(playlists)")}
+        if "profile" not in columns:  # libraries created before multi-profile support
+            self._db.execute("ALTER TABLE playlists ADD COLUMN profile TEXT NOT NULL DEFAULT ''")
 
     @property
     def playlists_dir(self) -> Path:
@@ -148,10 +153,11 @@ class Library:
 
     # ── Playlists ────────────────────────────────────────────────────────
 
-    def save_playlist(self, pid: str, title: str, kind: str, url: str, video_ids: list[str]) -> None:
+    def save_playlist(self, pid: str, title: str, kind: str, url: str, video_ids: list[str],
+                      profile: str = "") -> None:
         with self._lock, self._db:
-            self._db.execute("INSERT OR REPLACE INTO playlists VALUES (?,?,?,?,?)",
-                             (pid, title, kind, url, time.time()))
+            self._db.execute("INSERT OR REPLACE INTO playlists (id, title, kind, url, updated_at, profile) "
+                             "VALUES (?,?,?,?,?,?)", (pid, title, kind, url, time.time(), profile))
             self._db.execute("DELETE FROM playlist_items WHERE playlist_id = ?", (pid,))
             self._db.executemany("INSERT INTO playlist_items VALUES (?,?,?)",
                                  [(pid, i, vid) for i, vid in enumerate(video_ids)])
@@ -160,7 +166,7 @@ class Library:
     def playlists(self) -> list[LibraryPlaylist]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT p.id, p.title, p.kind, p.url, COUNT(i.video_id) FROM playlists p "
+                "SELECT p.id, p.title, p.kind, p.url, COUNT(i.video_id), p.profile FROM playlists p "
                 "LEFT JOIN playlist_items i ON i.playlist_id = p.id GROUP BY p.id "
                 "ORDER BY p.title COLLATE NOCASE").fetchall()
         return [LibraryPlaylist(*r) for r in rows]

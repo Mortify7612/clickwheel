@@ -9,8 +9,6 @@ from pathlib import Path
 
 import yt_dlp
 
-from . import auth
-
 ProgressFn = Callable[[float], None]
 
 
@@ -52,7 +50,8 @@ def ffmpeg_location() -> str | None:
         return None
 
 
-def download_audio(video_id: str, staging: Path, on_progress: ProgressFn | None = None) -> Path:
+def download_audio(video_id: str, staging: Path, on_progress: ProgressFn | None = None,
+                   cookies: str | None = None) -> Path:
     """Download one track as AAC/M4A into ``staging`` and return the file path.
 
     YouTube serves AAC in an MP4 container (128 kbps, or 256 kbps for Premium
@@ -80,7 +79,7 @@ def download_audio(video_id: str, staging: Path, on_progress: ProgressFn | None 
         # Only kicks in when no AAC stream exists (e.g. some uploads are Opus-only).
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "256"}],
     }
-    if cookies := auth.cookies_file():
+    if cookies:
         opts["cookiefile"] = cookies
     if ffmpeg := ffmpeg_location():
         opts["ffmpeg_location"] = ffmpeg

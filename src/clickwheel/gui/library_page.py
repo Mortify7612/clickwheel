@@ -138,10 +138,12 @@ class LibraryPage(QWidget):
         playlist = next((p for p in self.library.playlists() if p.id == pid), None)
         if playlist is None:
             return
+        # Private playlists only resolve with the account they were downloaded from.
+        profile = playlist.profile or None
         if playlist.url:
-            self.manager.enqueue_url(playlist.url)
+            self.manager.enqueue_url(playlist.url, profile)
         else:
-            self.manager.enqueue_playlist(pid, playlist.title)
+            self.manager.enqueue_playlist(pid, playlist.title, profile)
 
     def _remove_playlist(self) -> None:
         pid = self._selected_list()

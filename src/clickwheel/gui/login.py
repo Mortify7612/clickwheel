@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPlainTextEdit, QPushButton, QTabWidget, QVBoxLayout, QWidget,
+    QPlainTextEdit, QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from .. import auth
@@ -14,7 +14,7 @@ from . import workers
 class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Sign in to YouTube Music")
+        self.setWindowTitle("Add a YouTube Music account")
         self.setMinimumWidth(560)
 
         intro = QLabel(
@@ -32,8 +32,12 @@ class LoginDialog(QDialog):
         self.browser.addItems([b.capitalize() for b in auth.BROWSERS])
         self.profile = QLineEdit()
         self.profile.setPlaceholderText("Default profile")
+        self.authuser = QSpinBox(minimum=0, maximum=9)
+        self.authuser.setToolTip("If the browser is signed in to several Google accounts, 0 is the first one, "
+                                 "1 the second, and so on (the order in Google's account switcher).")
         form.addRow("Browser", self.browser)
-        form.addRow("Profile (optional)", self.profile)
+        form.addRow("Browser profile (optional)", self.profile)
+        form.addRow("Google account #", self.authuser)
         hint = QLabel("Firefox works on every platform. On Windows, Chrome/Edge may need to be closed first, "
                       "and newer Chrome versions block cookie access entirely; use Firefox or another tab then.")
         hint.setWordWrap(True)
@@ -59,18 +63,20 @@ class LoginDialog(QDialog):
         # cookies.txt
         file_tab = QWidget()
         h = QHBoxLayout(file_tab)
+        self.file_authuser = QSpinBox(minimum=0, maximum=9, prefix="Account #")
         self.cookie_path = QLineEdit()
         self.cookie_path.setPlaceholderText("cookies.txt exported with a browser extension")
         browse = QPushButton("Choose…")
         browse.clicked.connect(self._pick_file)
         h.addWidget(self.cookie_path)
         h.addWidget(browse)
+        h.addWidget(self.file_authuser)
         self.tabs.addTab(file_tab, "Cookies file")
 
         self.status = QLabel()
         self.status.setWordWrap(True)
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.buttons.button(QDialogButtonBox.Ok).setText("Sign in")
+        self.buttons.button(QDialogButtonBox.Ok).setText("Add account")
         self.buttons.accepted.connect(self._submit)
         self.buttons.rejected.connect(self.reject)
 
@@ -89,28 +95,20 @@ class LoginDialog(QDialog):
         tab = self.tabs.currentIndex()
         if tab == 0:
             fn, args = auth.sign_in_from_browser, (auth.BROWSERS[self.browser.currentIndex()],
-                                                   self.profile.text().strip() or None)
+                                                   self.profile.text().strip() or None,
+                                                   str(self.authuser.value()))
         elif tab == 1:
             fn, args = auth.sign_in_from_headers, (self.headers.toPlainText(),)
         else:
-            fn, args = auth.sign_in_from_cookies_file, (self.cookie_path.text().strip(),)
-
-        def sign_in_and_verify():
-            fn(*args)
-            from ..ytm import Resolver
-
-            try:
-                return Resolver(auth.client()).account_name()
-            except Exception as exc:
-                auth.sign_out()
-                raise auth.AuthError(f"YouTube Music rejected the session: {exc}") from exc
+            fn, args = auth.sign_in_from_cookies_file, (self.cookie_path.text().strip(),
+                                                        str(self.file_authuser.value()))
 
         self.buttons.setEnabled(False)
         self.status.setText("Signing in…")
-        workers.run(sign_in_and_verify, on_done=self._ok, on_error=self._fail)
+        workers.run(fn, *args, on_done=self._ok, on_error=self._fail)
 
-    def _ok(self, name: str) -> None:
-        self.account_name = name
+    def _ok(self, profile: auth.Profile) -> None:
+        self.profile_added = profile
         self.accept()
 
     def _fail(self, message: str) -> None:

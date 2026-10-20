@@ -5,8 +5,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMessageBox, QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .. import auth
@@ -26,13 +26,24 @@ class YtmPage(QWidget):
         self._rows: dict[tuple[str, int], int] = {}
         self._current: Collection | None = None
 
-        # Account bar
+        # Account bar: saved profiles
+        self.profile_combo = QComboBox()
+        self.profile_combo.setMinimumWidth(260)
+        self.profile_combo.currentIndexChanged.connect(self._on_profile_chosen)
+        self.add_btn = QPushButton("Add account…")
+        self.add_btn.clicked.connect(self._add_account)
+        self.remove_btn = QPushButton("Remove")
+        self.remove_btn.setToolTip("Forget this account's saved session on this computer")
+        self.remove_btn.clicked.connect(self._remove_account)
         self.account = QLabel()
-        self.sign_btn = QPushButton()
-        self.sign_btn.clicked.connect(self._toggle_sign_in)
+        self.account.setStyleSheet("color: palette(placeholder-text);")
         account_bar = QHBoxLayout()
+        account_bar.addWidget(QLabel("Account"))
+        account_bar.addWidget(self.profile_combo)
+        account_bar.addWidget(self.add_btn)
+        account_bar.addWidget(self.remove_btn)
         account_bar.addWidget(self.account, 1)
-        account_bar.addWidget(self.sign_btn)
+        self._playlists_for: str | None = None
 
         # Link box
         self.url = QLineEdit()
@@ -102,42 +113,72 @@ class YtmPage(QWidget):
         manager.finished.connect(self._on_finished)
         manager.error.connect(lambda what, msg: self.status_bar.showMessage(f"{what}: {msg}", 15000))
 
-        self._refresh_account()
+        self.refresh_profiles()
 
-    # ── Account ──────────────────────────────────────────────────────────
+    # ── Accounts ─────────────────────────────────────────────────────────
 
-    def _refresh_account(self, name: str | None = None) -> None:
-        if auth.is_signed_in():
-            self.account.setText(f"Signed in{f' as <b>{name}</b>' if name else ''}")
-            self.sign_btn.setText("Sign out")
-            self.refresh_btn.setEnabled(True)
-            if name is None:
-                workers.run(lambda: Resolver(auth.client()).account_name(),
-                            on_done=lambda n: self._refresh_account(n),
-                            on_error=lambda m: self.account.setText(f"Session problem: {m} — try signing in again"))
-                self.load_playlists()
-        else:
-            self.account.setText("Not signed in — public links still work.")
-            self.sign_btn.setText("Sign in…")
-            self.refresh_btn.setEnabled(False)
-            self.playlists.clear()
+    def refresh_profiles(self) -> None:
+        profiles = auth.profiles()
+        active = auth.active_profile()
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        for p in profiles:
+            self.profile_combo.addItem(p.label, p.id)
+        if not profiles:
+            self.profile_combo.addItem("Not signed in", None)
+        self.profile_combo.setCurrentIndex(max(0, self.profile_combo.findData(active.id if active else None)))
+        self.profile_combo.blockSignals(False)
+        self.remove_btn.setEnabled(bool(profiles))
+        self.refresh_btn.setEnabled(bool(profiles))
+        self.account.setText("" if profiles else "Public links still work without an account.")
+        self.load_playlists()
 
-    def _toggle_sign_in(self) -> None:
-        if auth.is_signed_in():
-            auth.sign_out()
-            self._refresh_account()
-            return
-        dlg = LoginDialog(self)
-        if dlg.exec():
-            self._refresh_account(dlg.account_name)
+    def _on_profile_chosen(self, _index: int) -> None:
+        profile_id = self.profile_combo.currentData()
+        if profile_id:
+            auth.set_active(profile_id)
             self.load_playlists()
 
+    def _add_account(self) -> None:
+        dlg = LoginDialog(self)
+        if dlg.exec():
+            self.status_bar.showMessage(f"Added {dlg.profile_added.label}", 5000)
+            self.refresh_profiles()
+
+    def _remove_account(self) -> None:
+        profile = auth.get_profile(self.profile_combo.currentData())
+        if profile is None:
+            return
+        if QMessageBox.question(
+                self, "Remove account",
+                f"Forget {profile.label} on this computer? Downloaded songs stay in your library.") == QMessageBox.Yes:
+            auth.remove_profile(profile.id)
+            remaining = auth.profiles()
+            if remaining:
+                auth.set_active(remaining[0].id)
+            self.refresh_profiles()
+
     def load_playlists(self) -> None:
+        profile = auth.active_profile()
+        self._playlists_for = profile.id if profile else None
         self.playlists.clear()
+        if profile is None:
+            return
         self.playlists.addItem("Loading…")
-        workers.run(lambda: Resolver(auth.client()).library_playlists(),
-                    on_done=self._show_playlists,
-                    on_error=lambda m: (self.playlists.clear(), self.playlists.addItem(f"Couldn't load: {m}")))
+        wanted = profile.id
+
+        def show(refs):
+            if self._playlists_for == wanted:  # ignore results for an account we've switched away from
+                self._show_playlists(refs)
+
+        def failed(message):
+            if self._playlists_for == wanted:
+                self.playlists.clear()
+                self.playlists.addItem("Couldn't load playlists")
+                self.account.setText(f"Session problem: {message.splitlines()[0][:120]} — try Add account again")
+
+        self.account.setText("")
+        workers.run(lambda: Resolver(auth.client(profile)).library_playlists(), on_done=show, on_error=failed)
 
     def _show_playlists(self, refs) -> None:
         self.playlists.clear()
@@ -172,7 +213,7 @@ class YtmPage(QWidget):
             item = self.playlists.item(i)
             if item.checkState() == Qt.Checked:
                 ref = item.data(Qt.UserRole)
-                self.manager.enqueue_playlist(ref.playlist_id, ref.title)
+                self.manager.enqueue_playlist(ref.playlist_id, ref.title, self._playlists_for)
                 item.setCheckState(Qt.Unchecked)
                 n += 1
         self.status_bar.showMessage(f"Queued {n} playlist(s)" if n else "Tick some playlists first", 4000)

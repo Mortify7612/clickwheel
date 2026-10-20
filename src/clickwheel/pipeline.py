@@ -40,8 +40,11 @@ EventFn = Callable[[TrackEvent], None]
 
 
 class Pipeline:
-    def __init__(self, library: Library, *, workers: int = 2, cover_size: int = 1000):
+    def __init__(self, library: Library, *, workers: int = 2, cover_size: int = 1000,
+                 cookies: str | None = None, profile_id: str = ""):
         self.library = library
+        self.cookies = cookies
+        self.profile_id = profile_id
         self.workers = max(1, workers)
         self.cover_size = cover_size
         self._cancel = threading.Event()
@@ -72,7 +75,7 @@ class Pipeline:
         if collection.kind != "track":
             # Keep the original order; drop failures so the playlist is still playable.
             self.library.save_playlist(collection.id, collection.title, collection.kind, collection.url,
-                                       list(dict.fromkeys(v for v in resolved if v)))
+                                       list(dict.fromkeys(v for v in resolved if v)), profile=self.profile_id)
         return counts
 
     def _process(self, index: int, meta: TrackMeta, tmp: Path, emit: EventFn) -> Status:
@@ -89,6 +92,7 @@ class Pipeline:
             staged = download_audio(
                 meta.video_id, tmp / meta.video_id,
                 lambda p: emit(TrackEvent(index, meta, Status.DOWNLOADING, p)),
+                cookies=self.cookies,
             )
             emit(TrackEvent(index, meta, Status.TAGGING, 1.0))
             write_tags(staged, meta, self._cover(meta))
