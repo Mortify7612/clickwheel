@@ -29,73 +29,77 @@ SUNKEN = f"border: 1px solid; border-color: {BEVEL_DARK} {BEVEL_LIGHT} {BEVEL_LI
 RETRO_QSS = f"""
 QWidget {{ background: {WINDOW}; color: {TEXT}; }}
 QLabel, QCheckBox, QRadioButton {{ background: transparent; }}
-QToolTip {{ background: {LCD_BG}; color: {LCD_TEXT}; border: 1px solid {LCD_TEXT}; font-family: {MONO}; }}
+QToolTip {{ background: {LCD_BG}; color: {LCD_TEXT}; border: 1px solid {LCD_TEXT}; border-radius: 6px;
+            padding: 4px 6px; font-family: {MONO}; }}
 
 QMenuBar {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3c3c48, stop:1 #26262e);
             border-bottom: 1px solid {BEVEL_DARK}; }}
-QMenuBar::item {{ background: transparent; padding: 3px 10px; color: {TEXT}; }}
+QMenuBar::item {{ background: transparent; padding: 3px 10px; color: {TEXT}; border-radius: 5px; }}
 QMenuBar::item:selected {{ background: {SELECT_BG}; color: {SELECT_TEXT}; }}
-QMenu {{ background: {PANEL}; {RAISED} }}
-QMenu::item {{ padding: 4px 22px; }}
+QMenu {{ background: {PANEL}; {RAISED} border-radius: 8px; padding: 4px; }}
+QMenu::item {{ padding: 5px 22px; border-radius: 5px; }}
 QMenu::item:selected {{ background: {SELECT_BG}; color: {SELECT_TEXT}; }}
 
-QTabWidget::pane {{ {RAISED} background: {WINDOW}; top: -1px; }}
+QTabWidget::pane {{ {RAISED} background: {WINDOW}; top: -1px; border-radius: 8px; border-top-left-radius: 0; }}
 QTabBar::tab {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #41414e, stop:1 #2a2a33);
-                color: {MUTED}; padding: 5px 16px; margin-right: 2px; {RAISED} border-bottom: none;
-                font-weight: bold; }}
+                color: {MUTED}; padding: 6px 18px; margin-right: 3px; {RAISED} border-bottom: none;
+                border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: bold; }}
 QTabBar::tab:selected {{ background: {WINDOW}; color: {ACCENT}; }}
 QTabBar::tab:hover:!selected {{ color: {TEXT}; }}
 
-QGroupBox {{ background: {PANEL}; {RAISED} margin-top: 16px; padding: 8px 6px 6px 6px; }}
+QGroupBox {{ background: {PANEL}; {RAISED} border-radius: 10px; margin-top: 16px; padding: 10px 8px 8px 8px; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: {ACCENT}; font-weight: bold; }}
 
 QPushButton {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #5c5c6a, stop:0.5 #45454f, stop:1 #33333c);
-               color: #ececf2; {RAISED} padding: 4px 12px; min-height: 18px; }}
+               color: #ececf2; {RAISED} border-radius: 7px; padding: 4px 12px; min-height: 18px; }}
 QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6c6c7a, stop:0.5 #52525d, stop:1 #3b3b45); }}
 QPushButton:pressed {{ background: #24242b; {SUNKEN} padding: 5px 11px 3px 13px; }}
 QPushButton:disabled {{ color: #64646e; background: #2d2d35; border-color: #44444e #18181d #18181d #44444e; }}
 QPushButton:default {{ color: {ACCENT}; }}
 
 QLineEdit, QPlainTextEdit, QTextBrowser, QSpinBox, QComboBox {{
-    background: {LCD_BG}; color: {LCD_TEXT}; {SUNKEN} padding: 4px 6px;
+    background: {LCD_BG}; color: {LCD_TEXT}; {SUNKEN} border-radius: 7px; padding: 4px 8px;
     selection-background-color: {SELECT_BG}; selection-color: {SELECT_TEXT}; }}
 QPlainTextEdit {{ font-family: {MONO}; }}
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color: {LCD_DIM}; }}
-QComboBox::drop-down {{ background: #3e3e49; width: 18px; border-left: 1px solid {BEVEL_DARK}; }}
+QComboBox::drop-down {{ background: #3e3e49; width: 20px; border-left: 1px solid {BEVEL_DARK};
+                        border-top-right-radius: 6px; border-bottom-right-radius: 6px; }}
 QComboBox QAbstractItemView {{ background: {LCD_BG}; color: {LCD_TEXT}; selection-background-color: {SELECT_BG};
-                               {RAISED} }}
+                               {RAISED} border-radius: 8px; padding: 4px; }}
 
 QTableView, QTableWidget, QListView, QListWidget {{
     background: {LCD_BG}; alternate-background-color: #050a06; color: {LIST_TEXT};
-    gridline-color: #10261a; {SUNKEN}
+    gridline-color: #10261a; {SUNKEN} border-radius: 10px; padding: 3px;
     selection-background-color: {SELECT_BG}; selection-color: {SELECT_TEXT}; outline: 0; }}
-QListView::item, QListWidget::item {{ padding: 6px 8px; margin: 1px 3px; border-radius: 3px; }}
+QListView::item, QListWidget::item {{ padding: 6px 10px; margin: 1px 3px; border-radius: 7px; }}
 QListView::item:hover, QListWidget::item:hover {{ background: #0e1a12; }}
 QListView::item:selected, QListWidget::item:selected {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3553d6, stop:1 #1a32a8); color: {SELECT_TEXT}; }}
 QTableView:disabled, QListView:disabled {{ color: {LCD_DIM}; }}
 QTableCornerButton::section {{ background: #2a2a33; border: 1px solid {BEVEL_DARK}; }}
-QHeaderView {{ background: #111116; }}
+QHeaderView {{ background: transparent; }}
 QHeaderView::section {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22222a, stop:1 #15151b);
                         color: {ACCENT}; border: none; border-bottom: 1px solid #3a3a46;
                         border-right: 1px solid #1c1c23; padding: 0 10px; }}
+QHeaderView::section:first {{ border-top-left-radius: 8px; }}
+QHeaderView::section:last {{ border-top-right-radius: 8px; border-right: none; }}
 QHeaderView::section:hover {{ color: #ffd866; }}
 
-QProgressBar {{ background: {LCD_BG}; {SUNKEN} color: #f2fff5; text-align: center; min-height: 16px;
+QProgressBar {{ background: {LCD_BG}; {SUNKEN} border-radius: 9px; color: #f2fff5; text-align: center; min-height: 16px;
                 font-family: {MONO}; font-weight: bold; }}
 /* Darker LEDs so the white caption stays readable over lit segments. */
 QProgressBar::chunk {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #27a552, stop:1 #0d5f29);
-                       width: 6px; margin: 2px 1px; }}
+                       width: 6px; margin: 3px 1px; border-radius: 2px; }}
 
-QScrollBar:vertical {{ background: #17171c; width: 14px; margin: 0; }}
-QScrollBar:horizontal {{ background: #17171c; height: 14px; margin: 0; }}
+QScrollBar:vertical {{ background: transparent; width: 12px; margin: 4px 2px; }}
+QScrollBar:horizontal {{ background: transparent; height: 12px; margin: 2px 4px; }}
 QScrollBar::handle {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #5c5c6a, stop:1 #3a3a44);
-                      {RAISED} min-height: 24px; min-width: 24px; }}
+                      {RAISED} border-radius: 4px; min-height: 28px; min-width: 28px; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 
 QRadioButton::indicator, QCheckBox::indicator, QAbstractItemView::indicator {{
-    width: 11px; height: 11px; background: {LCD_BG}; {SUNKEN} }}
+    width: 11px; height: 11px; background: {LCD_BG}; {SUNKEN} border-radius: 3px; }}
 QRadioButton::indicator {{ border-radius: 7px; }}
 QRadioButton::indicator:checked {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
                                      stop:0 #9dffbd, stop:0.45 {LCD_TEXT}, stop:0.55 {LCD_BG}); }}
@@ -103,17 +107,20 @@ QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #7dffa6, stop:1 #00a83a); }}
 QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {{ background: #101014; }}
 
-QSlider::groove:horizontal {{ background: {LCD_BG}; {SUNKEN} height: 6px; }}
+QSlider::groove:horizontal {{ background: {LCD_BG}; {SUNKEN} height: 6px; border-radius: 4px; }}
 QSlider::sub-page:horizontal {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #27a552, stop:1 #0d5f29);
-                                 {SUNKEN} height: 6px; }}
-QSlider::handle:horizontal {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #8a8a98, stop:1 #4a4a55);
-                              {RAISED} width: 12px; margin: -5px 0; }}
-QSlider::handle:horizontal:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #a0a0ae, stop:1 #55555f); }}
+                                 {SUNKEN} height: 6px; border-radius: 4px; }}
+QSlider::handle:horizontal {{ background: qradialgradient(cx:0.4, cy:0.35, radius:0.75, fx:0.4, fy:0.35,
+                                                           stop:0 #c4c4d0, stop:1 #4a4a55);
+                              {RAISED} width: 14px; height: 14px; margin: -5px 0; border-radius: 8px; }}
+QSlider::handle:horizontal:hover {{ background: qradialgradient(cx:0.4, cy:0.35, radius:0.75, fx:0.4, fy:0.35,
+                                                                 stop:0 #e0e0ea, stop:1 #55555f); }}
 QSlider:disabled {{ }}
 QPushButton:checked {{ background: #1c1c22; {SUNKEN} color: {LCD_TEXT}; }}
 
 QSplitter::handle {{ background: {WINDOW}; }}
-QStatusBar {{ background: {LCD_BG}; color: {LCD_TEXT}; font-family: {MONO}; border-top: 1px solid {BEVEL_LIGHT}; }}
+QStatusBar {{ background: {LCD_BG}; color: {LCD_TEXT}; font-family: {MONO}; border-top: 1px solid {BEVEL_LIGHT};
+              padding: 2px 6px; }}
 QStatusBar QLabel {{ color: {LCD_TEXT}; }}
 QDialogButtonBox QPushButton {{ min-width: 72px; }}
 """
@@ -137,10 +144,16 @@ def _retro_palette() -> QPalette:
 
 
 _system_style: str | None = None
+_current = "system"
+
+
+def is_retro() -> bool:
+    return _current == "retro"
 
 
 def apply_theme(app: QApplication, name: str) -> None:
-    global _system_style
+    global _system_style, _current
+    _current = name
     if _system_style is None:
         _system_style = app.style().name()
     if name == "retro":

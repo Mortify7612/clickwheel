@@ -21,7 +21,7 @@ from .lcd import BARS, LcdDisplay
 from .player import Player
 from .player_bar import PlayerBar
 from .library_page import LibraryPage
-from .theme import THEMES, apply_theme
+from .theme import THEMES, apply_theme, is_retro
 from .update_dialog import check_for_updates
 from .workers import DownloadManager
 from .ytm_page import YtmPage
@@ -130,6 +130,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self._tabs = tabs
         self._wire_lcd(status)
+        self.restyle()
 
         def sync_songs(paths):
             tabs.setCurrentWidget(self.device_page)  # show progress where syncs live
@@ -156,6 +157,19 @@ class MainWindow(QMainWindow):
 
         status.showMessage(f"Library: {self.library.root}")
         QTimer.singleShot(3000, lambda: check_for_updates(self, self.settings, manual=False))
+
+    def restyle(self) -> None:
+        """Theme-dependent touches a stylesheet can't express (e.g. uppercase tab labels)."""
+        for tabs in (self._tabs, self.device_page.bottom):
+            # The stylesheet sets the tab font, so capitalise the labels themselves.
+            for i in range(tabs.count()):
+                original = tabs.tabBar().tabData(i)
+                if original is None:
+                    original = tabs.tabText(i)
+                    tabs.tabBar().setTabData(i, original)
+                tabs.setTabText(i, original.upper() if is_retro() else original)
+        for table in (self.library_page.table, self.device_page.browser.table, self.ytm_page.table):
+            table.viewport().update()
 
     def _wire_lcd(self, status) -> None:
         lcd = self.lcd
@@ -204,7 +218,11 @@ class MainWindow(QMainWindow):
 
     def _settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
-        if dlg.exec() and dlg.apply():
+        if not dlg.exec():
+            return
+        changed_folder = dlg.apply()
+        self.restyle()
+        if changed_folder:
             QMessageBox.information(self, "Restart needed",
                                     "The new library folder will be used the next time Clickwheel starts.")
 
