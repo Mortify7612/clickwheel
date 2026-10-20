@@ -265,3 +265,48 @@ def test_rockbox_delete_and_reorder(library, tmp_path):
     assert "Other Single" not in _titles(contents)
     assert _titles(contents, contents.playlists[0].track_indices) == ["First Song"]
     assert not (mount / "Music" / "Solo Act").exists()
+
+
+@pytest.mark.parametrize("model", ["MC297", "MC751"], ids=["Classic 7G", "Shuffle 4G"])
+def test_add_selected_songs_keeps_everything_else(library, tmp_path, model):
+    dev = _virtual(tmp_path, model)
+    backend = dev.backend()
+    first, second, single = (library.root / library.track(v).relpath for v in ("aaaaaaaaaa1", "aaaaaaaaaa2", "bbbbbbbbbb1"))
+
+    summary = backend.add_tracks(library.root, {first})
+    assert summary.ok and summary.added == 1
+    assert _titles(backend.browse()) == ["First Song"]
+
+    summary = backend.add_tracks(library.root, {single})
+    assert summary.ok and (summary.added, summary.removed) == (1, 0)
+    assert sorted(_titles(backend.browse())) == ["First Song", "Other Single"]
+
+    # Already there: nothing to do, nothing removed.
+    summary = backend.add_tracks(library.root, {first, second})
+    assert summary.ok and (summary.added, summary.removed) == (1, 0)
+    assert len(backend.browse().tracks) == 3
+
+
+def test_rockbox_add_selected_songs(library, tmp_path):
+    mount = tmp_path / "rockbox"
+    (mount / ".rockbox").mkdir(parents=True)
+    rb = identify(mount).backend()
+    rb.sync(library.root)
+    library.delete_track("bbbbbbbbbb1")  # gone from the library, but add-only mode must not remove it
+    first = library.root / library.track("aaaaaaaaaa1").relpath
+    summary = rb.add_tracks(library.root, {first})
+    assert summary.ok and (summary.added, summary.removed) == (0, 0)
+    assert len(rb.browse().tracks) == 3
+
+
+def test_sync_uses_its_own_device_even_after_scanning_another(library, tmp_path):
+    """pyPodLib's global "current device" must not leak between iPods."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    classic = _virtual(tmp_path / "a", "MC297")
+    shuffle = _virtual(tmp_path / "b", "MC751")
+    identify(shuffle.path)  # a scan touching the other iPod last
+    summary = classic.backend().sync(library.root)
+    assert summary.ok, summary.errors
+    assert len(classic.backend().browse().tracks) == 3
+    assert all(t.artwork is not None for t in classic.backend().browse().tracks)

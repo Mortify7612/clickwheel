@@ -58,6 +58,7 @@ class LibraryTrack:
     track_number: int
     year: str
     duration: int
+    added_at: float = 0.0  # unix time the song was downloaded
 
 
 @dataclass
@@ -119,14 +120,14 @@ class Library:
     def track(self, video_id: str) -> LibraryTrack | None:
         with self._lock:
             row = self._db.execute(
-                "SELECT video_id, relpath, title, artist, album, album_artist, track_number, year, duration "
+                "SELECT video_id, relpath, title, artist, album, album_artist, track_number, year, duration, added_at "
                 "FROM tracks WHERE video_id = ?", (video_id,)).fetchone()
         return LibraryTrack(*row) if row else None
 
     def tracks(self) -> list[LibraryTrack]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT video_id, relpath, title, artist, album, album_artist, track_number, year, duration "
+                "SELECT video_id, relpath, title, artist, album, album_artist, track_number, year, duration, added_at "
                 "FROM tracks ORDER BY album_artist COLLATE NOCASE, album COLLATE NOCASE, track_number"
             ).fetchall()
         return [LibraryTrack(*r) for r in rows]
@@ -175,7 +176,7 @@ class Library:
         with self._lock:
             rows = self._db.execute(
                 "SELECT t.video_id, t.relpath, t.title, t.artist, t.album, t.album_artist, t.track_number, "
-                "t.year, t.duration FROM playlist_items i JOIN tracks t ON t.video_id = i.video_id "
+                "t.year, t.duration, t.added_at FROM playlist_items i JOIN tracks t ON t.video_id = i.video_id "
                 "WHERE i.playlist_id = ? ORDER BY i.position", (pid,)).fetchall()
         return [LibraryTrack(*r) for r in rows]
 

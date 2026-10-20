@@ -64,17 +64,30 @@ def identify(path: Path) -> Device | None:
     ipod = None
     name, model = path.name or str(path), "Rockbox player"
     if apple_db:
-        try:
-            import pypodlib
+        from pypodlib.device.info import get_current_device, set_current_device
 
-            ipod = pypodlib.connect(path)
-            model = f"{ipod.model_family} {ipod.generation} {ipod.capacity}".strip()
+        from ._session import DEVICE_LOCK
+
+        # pypodlib.connect() makes this iPod the process-wide current device;
+        # don't let a scan swap it out from under a sync in progress.
+        with DEVICE_LOCK:
+            previous = get_current_device()
             try:
-                name = ipod.library().master_playlist.name or name
+                import pypodlib
+
+                ipod = pypodlib.connect(path)
+                model = f"{ipod.model_family} {ipod.generation} {ipod.capacity}".strip()
+                try:
+                    name = ipod.library().master_playlist.name or name
+                except Exception:
+                    pass
             except Exception:
-                pass
-        except Exception:
-            model = "iPod (unrecognised model)"
+                model = "iPod (unrecognised model)"
+            finally:
+                try:
+                    set_current_device(previous)
+                except Exception:
+                    set_current_device(None)
     return Device(path, name, model, "rockbox" if rockbox else "apple", apple_db, ipod)
 
 

@@ -69,9 +69,15 @@ class DevicePage(QWidget):
         self.pick.setSelectionMode(QAbstractItemView.NoSelection)
         self.some_radio.toggled.connect(self.pick.setEnabled)
         self.pick.setEnabled(False)
+        mirror_note = QLabel("The iPod is made to match the selection: other songs Clickwheel synced are removed. "
+                             "To add songs without removing any, select them on the Library tab and use "
+                             "“Sync selected to iPod”.")
+        mirror_note.setWordWrap(True)
+        mirror_note.setStyleSheet("color: palette(placeholder-text);")
         wv.addWidget(self.all_radio)
         wv.addWidget(self.some_radio)
         wv.addWidget(self.pick, 1)
+        wv.addWidget(mirror_note)
 
         self.sync_btn = QPushButton("Sync")
         self.sync_btn.setDefault(True)
@@ -223,6 +229,23 @@ class DevicePage(QWidget):
         if allowed is not None and not allowed:
             QMessageBox.information(self, "Nothing selected", "Tick at least one playlist or album.")
             return
+        self._start_sync(dev, f"Syncing to {dev.label}…",
+                         lambda b, **kw: b.sync(self.library.root, allowed=allowed, playlists=playlists, **kw))
+
+    def sync_songs(self, paths: list[Path]) -> None:
+        """Add just these library files to the current device (nothing is removed)."""
+        if self._syncing or self._editing:
+            QMessageBox.information(self, "iPod busy", "Wait for the current sync or edit to finish.")
+            return
+        dev = self.current
+        if dev is None:
+            QMessageBox.information(self, "No iPod", "Plug in an iPod (or choose its folder on the iPod tab) first.")
+            return
+        n = len(paths)
+        self._start_sync(dev, f"Adding {n} song{'s' if n != 1 else ''} to {dev.label}…",
+                         lambda b, **kw: b.add_tracks(self.library.root, set(paths), **kw))
+
+    def _start_sync(self, dev: Device, title: str, job) -> None:
         try:
             backend = dev.backend(self.settings.rockbox_prefers_files)
         except RuntimeError as exc:
@@ -237,10 +260,9 @@ class DevicePage(QWidget):
         self.progress.setRange(0, 0)
         self._phase = ""
         self.bottom.setCurrentWidget(self.log)
-        self._log(f"Syncing to {dev.label}…")
+        self._log(title)
 
-        task = workers.Task(backend.sync, self.library.root, allowed=allowed, playlists=playlists,
-                            progress=lambda msg, cur, tot: task.progress.emit((msg, cur, tot)),
+        task = workers.Task(job, backend, progress=lambda msg, cur, tot: task.progress.emit((msg, cur, tot)),
                             cancelled=self._cancel.is_set)
         task.progress.connect(self._on_progress)
         task.done.connect(self._on_synced)

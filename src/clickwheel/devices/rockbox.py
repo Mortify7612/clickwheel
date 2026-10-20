@@ -30,6 +30,38 @@ class RockboxSync:
     def browse(self) -> DeviceContents:
         return browse(self.mount)
 
+    def add_tracks(self, library_root: Path, paths: set[Path], *, progress: ProgressFn | None = None,
+                   cancelled: Callable[[], bool] | None = None) -> SyncSummary:
+        """Copy ``paths`` without removing anything or touching playlists."""
+        progress = progress or (lambda *_: None)
+        summary = SyncSummary()
+        manifest = self._manifest()
+        tracks: dict[str, list] = manifest.setdefault("tracks", {})
+        wanted = sorted(Path(p) for p in paths)
+        for i, src in enumerate(wanted):
+            if cancelled and cancelled():
+                summary.errors.append("Cancelled")
+                break
+            rel = src.relative_to(library_root).as_posix()
+            st = src.stat()
+            sig = [st.st_size, int(st.st_mtime)]
+            dest = self.music / rel
+            if tracks.get(rel) == sig and dest.exists():
+                continue
+            progress(f"Copying songs · {src.name}", i, len(wanted))
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+            except OSError as exc:
+                summary.errors.append(f"{rel}: {exc}")
+                continue
+            summary.added += rel not in tracks
+            summary.updated += rel in tracks
+            tracks[rel] = sig
+        self._save_manifest(manifest)
+        progress("Done", len(wanted), len(wanted))
+        return summary
+
     def delete_tracks(self, locations: set[str]) -> int:
         """Delete songs (device paths like "/Music/A/B/01 X.m4a") and drop them from playlists."""
         removed = 0

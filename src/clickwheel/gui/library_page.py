@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSize, QUrl
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtCore import QDateTime, QLocale, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -19,7 +19,19 @@ ALL = "__all__"
 ART_KEY, ART_PATH = 257, 258  # item data roles on the Title cell
 
 
+class SortKeyItem(QTableWidgetItem):
+    """Shows friendly text but sorts by a hidden key (Qt.UserRole)."""
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        mine, theirs = self.data(Qt.UserRole), other.data(Qt.UserRole)
+        if mine is None or theirs is None:
+            return super().__lt__(other)
+        return mine < theirs
+
+
 class LibraryPage(QWidget):
+    sync_requested = Signal(list)  # library file paths to add to the current iPod
+
     def __init__(self, library: Library, manager: workers.DownloadManager):
         super().__init__()
         self.library = library
@@ -46,8 +58,9 @@ class LibraryPage(QWidget):
         self.filter = QLineEdit()
         self.filter.setPlaceholderText("Filter…")
         self.filter.textChanged.connect(self._apply_filter)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["#", "Title", "Artist", "Album", "Year"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["#", "Title", "Artist", "Album", "Year", "Added"])
+        self.table.setContextMenuPolicy(Qt.ActionsContextMenu)
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -62,6 +75,16 @@ class LibraryPage(QWidget):
         open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.library.root))))
         delete_btn = QPushButton("Delete selected songs")
         delete_btn.clicked.connect(self._delete_selected)
+        self.sync_btn = QPushButton("Sync selected to iPod")
+        self.sync_btn.setToolTip("Add the selected songs to the iPod without removing anything")
+        self.sync_btn.clicked.connect(self._sync_selected)
+        self.table.itemSelectionChanged.connect(
+            lambda: self.sync_btn.setEnabled(bool(self.table.selectedIndexes())))
+        self.sync_btn.setEnabled(False)
+        for label, slot in (("Sync to iPod", self._sync_selected), ("Delete from library…", self._delete_selected)):
+            action = QAction(label, self.table)
+            action.triggered.connect(slot)
+            self.table.addAction(action)
         self.summary = QLabel()
         right = QWidget()
         rv = QVBoxLayout(right)
@@ -71,6 +94,7 @@ class LibraryPage(QWidget):
         row = QHBoxLayout()
         row.addWidget(self.summary, 1)
         row.addWidget(open_btn)
+        row.addWidget(self.sync_btn)
         row.addWidget(delete_btn)
         rv.addLayout(row)
 
@@ -123,6 +147,11 @@ class LibraryPage(QWidget):
             self.table.setItem(row, 0, num)
             for col, text in enumerate([t.title, t.artist, t.album, t.year], start=1):
                 self.table.setItem(row, col, QTableWidgetItem(text))
+            when = QDateTime.fromSecsSinceEpoch(int(t.added_at))
+            added = SortKeyItem(QLocale.system().toString(when.date(), QLocale.ShortFormat))
+            added.setData(Qt.UserRole, t.added_at)
+            added.setToolTip(QLocale.system().toString(when, QLocale.LongFormat))
+            self.table.setItem(row, 5, added)
             key = album_key(t.album_artist, t.album)
             title = self.table.item(row, 1)
             title.setData(ART_KEY, key)
@@ -154,6 +183,16 @@ class LibraryPage(QWidget):
         for row in range(self.table.rowCount()):
             hay = " ".join(self.table.item(row, c).text() for c in (1, 2, 3)).casefold()
             self.table.setRowHidden(row, bool(needle) and needle not in hay)
+
+    def _sync_selected(self) -> None:
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        paths = []
+        for row in rows:
+            track = self.library.track(self.table.item(row, 0).data(256))
+            if track is not None:
+                paths.append(self.library.root / track.relpath)
+        if paths:
+            self.sync_requested.emit(paths)
 
     def _delete_selected(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})

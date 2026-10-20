@@ -102,6 +102,12 @@ class MainWindow(QMainWindow):
         tabs.currentChanged.connect(lambda i: i == 2 and self.device_page.refresh_choices())
         self.setCentralWidget(tabs)
 
+        def sync_songs(paths):
+            tabs.setCurrentWidget(self.device_page)  # show progress where syncs live
+            self.device_page.sync_songs(paths)
+
+        self.library_page.sync_requested.connect(sync_songs)
+
         menu = self.menuBar().addMenu("&File")
         prefs = QAction("Settings…", self)
         prefs.triggered.connect(self._settings)

@@ -20,6 +20,7 @@ from pypodlib.sync import playlist_parser
 from pypodlib.sync.sync_executor import SyncExecutor
 
 from . import itunessd
+from ._session import on_device
 from .contents import ArtworkRef, DeviceContents, DevicePlaylist, DeviceTrack
 
 ProgressFn = Callable[[str, int, int], None]
@@ -151,6 +152,14 @@ def find_fpcalc() -> str:
     )
 
 
+LIBRARY_AUDIO = {".m4a", ".mp3", ".aac", ".wav"}
+
+
+def _library_files(root: Path) -> list[Path]:
+    return [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in LIBRARY_AUDIO
+            and "Playlists" not in p.relative_to(root).parts]
+
+
 def _loc(track) -> str:
     return (track.location or "").replace(":", "/")
 
@@ -178,6 +187,7 @@ class AppleSync:
     def __init__(self, ipod: IPod):
         self.ipod = ipod
 
+    @on_device
     def ensure_database(self) -> None:
         """Create an empty database on a freshly restored/wiped iPod.
 
@@ -227,12 +237,14 @@ class AppleSync:
             is_cancelled=cancelled,
         )
 
+    @on_device
     def plan(self, library_root: Path, **kw):
         out = SyncEngine().run(self._request(EngineOperation.PLAN, library_root, **kw))
         if not out.success:
             raise RuntimeError("; ".join(d.message for d in out.diagnostics) or "Planning failed")
         return out.result
 
+    @on_device
     def sync(self, library_root: Path, *, allowed: set[Path] | None = None, playlists: set[Path] | None = None,
              progress: ProgressFn | None = None, cancelled: Callable[[], bool] | None = None) -> SyncSummary:
         kw = dict(allowed=allowed, playlists=playlists, progress=progress, cancelled=cancelled)
@@ -254,6 +266,23 @@ class AppleSync:
             self.write_itunessd()
         return summary
 
+    @on_device
+    def add_tracks(self, library_root: Path, paths: set[Path], *, progress: ProgressFn | None = None,
+                   cancelled: Callable[[], bool] | None = None) -> SyncSummary:
+        """Copy ``paths`` to the iPod without removing anything else.
+
+        pyPodLib's selective mode mirrors the selection (unselected songs are
+        removed), so widen the selection to every library song that is already
+        on the device, and leave playlists as they are.
+        """
+        self.ensure_database()
+        full = self.plan(library_root, progress=progress, cancelled=cancelled)
+        missing = {Path(i.pc_track.path).resolve() for i in full.to_add if i.pc_track is not None}
+        on_device = {p for p in _library_files(library_root) if p.resolve() not in missing}
+        return self.sync(library_root, allowed=on_device | {Path(p) for p in paths}, playlists=set(),
+                         progress=progress, cancelled=cancelled)
+
+    @on_device
     def write_itunessd(self) -> Path:
         lib = self.ipod.library(reload=True)
         tracks, index_by_dbid = [], {}
@@ -275,6 +304,7 @@ class AppleSync:
         version = getattr(self.ipod.capabilities, "shadow_db_version", 0) or 2
         return itunessd.write(Path(self.ipod.path), version, tracks, playlists)
 
+    @on_device
     def browse(self) -> DeviceContents:
         from pypodlib.device.info import resolve_itdb_path
 
@@ -305,6 +335,7 @@ class AppleSync:
         if getattr(self.ipod.capabilities, "is_shuffle", False):
             self.write_itunessd()
 
+    @on_device
     def delete_tracks(self, locations: set[str]) -> int:
         """Remove songs (by device location) from the database, then their files."""
         lib = self.ipod.library(reload=True)
@@ -319,6 +350,7 @@ class AppleSync:
             (root / _loc(t).lstrip("/")).unlink(missing_ok=True)
         return len(doomed)
 
+    @on_device
     def reorder(self, playlist_id: str | None, locations: list[str]) -> None:
         """Set a playlist's order, or with ``None`` the master list (Shuffle play order)."""
         lib = self.ipod.library(reload=True)
