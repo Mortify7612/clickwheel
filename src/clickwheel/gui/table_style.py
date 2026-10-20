@@ -29,8 +29,8 @@ class TrackDelegate(QStyledItemDelegate):
     def __init__(self, kinds: dict[int, str], parent=None):
         super().__init__(parent)
         self.kinds = kinds
-        self._title_font = ui_font(10, QFont.Medium)
-        self._text_font = ui_font(9.5)
+        self._title_font = ui_font(9.5, QFont.Medium)
+        self._text_font = ui_font(9)
         self._number_font = mono_font(9)
 
     def sizeHint(self, option, index) -> QSize:

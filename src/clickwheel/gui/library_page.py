@@ -69,7 +69,7 @@ class LibraryPage(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSortingEnabled(True)
         style_track_table(self.table, {0: NUMBER, 1: TITLE, 2: TEXT, 3: MUTED, 4: NUMBER, 5: MUTED},
-                          {0: 48, 4: 64, 5: 96}, weights={1: 4, 2: 3, 3: 3})
+                          {0: 48, 4: 64, 5: 96}, weights={1: 5, 2: 3, 3: 3})
         self.table.currentCellChanged.connect(lambda row, *_: self._show_selected(row))
         open_btn = QPushButton("Open library folder")
         open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.library.root))))

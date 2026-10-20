@@ -215,7 +215,7 @@ def main() -> int:
     app.setDesktopFileName("clickwheel")
     app.setWindowIcon(QIcon(str(ICON_PATH)))
     load_fonts()
-    app.setFont(ui_font(10))
+    app.setFont(ui_font(9.5))
     apply_theme(app, Settings.load().theme)
     window = MainWindow()
     window.show()

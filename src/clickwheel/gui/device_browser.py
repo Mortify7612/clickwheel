@@ -89,7 +89,7 @@ class DeviceBrowser(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         style_track_table(self.table, {0: NUMBER, 1: TITLE, 2: TEXT, 3: MUTED, 4: NUMBER, 5: NUMBER},
-                          {0: 52, 4: 64, 5: 64}, weights={1: 4, 2: 3, 3: 3})
+                          {0: 52, 4: 64, 5: 64}, weights={1: 5, 2: 3, 3: 3})
         self.table.currentCellChanged.connect(lambda row, *_: self._show_selected(row))
         self.table.itemSelectionChanged.connect(self._update_buttons)
         self.table.doubleClicked.connect(lambda index: self._play_from(index.row()))

@@ -7,8 +7,8 @@ from pathlib import Path
 from PySide6.QtGui import QFont, QFontDatabase
 
 FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
-UI_FAMILY = "Inter"
 MONO_FAMILY = "JetBrains Mono"
+UI_FAMILY = MONO_FAMILY  # all-monospace look, in keeping with the retro hardware skin
 _loaded = False
 
 
@@ -22,11 +22,11 @@ def load_fonts() -> None:
     _loaded = True
 
 
-def ui_font(point_size: float = 10, weight: QFont.Weight = QFont.Normal) -> QFont:
+def ui_font(point_size: float = 9.5, weight: QFont.Weight = QFont.Normal) -> QFont:
     font = QFont(UI_FAMILY)
+    font.setStyleHint(QFont.Monospace)
     font.setPointSizeF(point_size)
     font.setWeight(weight)
-    font.setHintingPreference(QFont.PreferNoHinting)  # Inter is designed to render unhinted
     return font
 
 
@@ -38,9 +38,9 @@ def mono_font(point_size: float = 9.5, weight: QFont.Weight = QFont.Normal) -> Q
     return font
 
 
-def label_font(point_size: float = 8) -> QFont:
+def label_font(point_size: float = 7.5) -> QFont:
     """Small spaced-out caps, for table headers and panel labels."""
-    font = ui_font(point_size, QFont.DemiBold)
+    font = ui_font(point_size, QFont.Bold)
     font.setCapitalization(QFont.AllUppercase)
-    font.setLetterSpacing(QFont.PercentageSpacing, 112)
+    font.setLetterSpacing(QFont.PercentageSpacing, 106)
     return font
