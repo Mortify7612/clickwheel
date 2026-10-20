@@ -1,0 +1,88 @@
+name: Build
+
+# Tests run on every push. Installers are built on demand (Actions tab ->
+# Build -> Run workflow) or when a version tag like v0.2.0 is pushed, since
+# macOS runner minutes are billed at 10x on private repos.
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --locked
+      - run: uv run pytest -q
+
+  build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            name: macos-arm64
+          - os: macos-15-intel
+            name: macos-intel
+          - os: windows-latest
+            name: windows-x64
+          - os: ubuntu-22.04  # older glibc so the build runs on more distros
+            name: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked
+
+      # Tests that need ffmpeg skip themselves where it isn't installed.
+      - run: uv run pytest -q
+
+      - run: uv run pyinstaller --noconfirm --distpath dist --workpath build packaging/clickwheel.spec
+
+      - name: Smoke-test the frozen app
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            macOS)   exe=dist/Clickwheel.app/Contents/MacOS/Clickwheel ;;
+            Windows) exe=dist/Clickwheel/Clickwheel.exe ;;
+            *)       exe=dist/Clickwheel/Clickwheel ;;
+          esac
+          "$exe" devices
+          "$exe" logout
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: hdiutil create -volname Clickwheel -srcfolder dist/Clickwheel.app -ov -format UDZO "Clickwheel-${{ matrix.name }}.dmg"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/Clickwheel -DestinationPath "Clickwheel-${{ matrix.name }}.zip"
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: tar -czf "Clickwheel-${{ matrix.name }}.tar.gz" -C dist Clickwheel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clickwheel-${{ matrix.name }}
+          path: Clickwheel-${{ matrix.name }}.*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: Clickwheel-*
