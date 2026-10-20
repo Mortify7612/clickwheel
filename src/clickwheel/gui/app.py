@@ -16,6 +16,7 @@ from .._version import __version__
 from ..config import APP_NAME, DB_FILE, Settings
 from ..library import Library
 from .device_page import DevicePage
+from .fonts import load_fonts, ui_font
 from .lcd import BARS, LcdDisplay
 from .player import Player
 from .player_bar import PlayerBar
@@ -213,6 +214,8 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName("clickwheel")
     app.setWindowIcon(QIcon(str(ICON_PATH)))
+    load_fonts()
+    app.setFont(ui_font(10))
     apply_theme(app, Settings.load().theme)
     window = MainWindow()
     window.show()

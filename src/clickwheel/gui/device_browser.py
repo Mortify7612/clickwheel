@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
     QWidget,
 )
@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
 from ..devices.contents import DeviceContents, DeviceTrack
 from ..library import Library
 from . import workers
-from .artwork import THUMB, ArtPanel, CoverCache, album_key
+from .artwork import ArtPanel, CoverCache, album_key
+from .table_style import MUTED, NUMBER, TEXT, TITLE, style_header, style_track_table
 
 ALL = -1
 ART_KEY, ART_PATH, TRACK_INDEX = 257, 258, 259  # item data roles
@@ -87,15 +88,11 @@ class DeviceBrowser(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setIconSize(QSize(THUMB, THUMB))
-        self.table.verticalHeader().setDefaultSectionSize(THUMB + 6)
+        style_track_table(self.table, {0: NUMBER, 1: TITLE, 2: TEXT, 3: MUTED, 4: NUMBER, 5: NUMBER},
+                          {0: 52, 4: 64, 5: 64}, weights={1: 4, 2: 3, 3: 3})
         self.table.currentCellChanged.connect(lambda row, *_: self._show_selected(row))
         self.table.itemSelectionChanged.connect(self._update_buttons)
         self.table.doubleClicked.connect(lambda index: self._play_from(index.row()))
-        hh = self.table.horizontalHeader()
-        for col in (1, 2, 3):
-            hh.setSectionResizeMode(col, QHeaderView.Stretch)
-
         self.up_btn = QPushButton("Move up")
         self.up_btn.setToolTip("Ctrl+Up")
         self.up_btn.clicked.connect(lambda: self._move(-1))
@@ -259,6 +256,7 @@ class DeviceBrowser(QWidget):
                 title.setData(ART_PATH, source)
                 self.covers.request(key, source)
         self.table.setHorizontalHeaderItem(0, QTableWidgetItem("Pos" if self._reorderable() else "#"))
+        style_header(self.table, {0: NUMBER})
         self.table.setSortingEnabled(not self._reorderable())
         self._mark_now_playing()
         if select:

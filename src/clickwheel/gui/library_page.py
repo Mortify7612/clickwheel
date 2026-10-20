@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QDateTime, QLocale, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QDateTime, QLocale, Qt, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPalette
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QAbstractItemView, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ..library import Library
 from . import workers
-from .artwork import THUMB, ArtPanel, CoverCache, album_key
+from .artwork import ArtPanel, CoverCache, album_key
+from .table_style import MUTED, NUMBER, TEXT, TITLE, style_track_table
 
 ALL = "__all__"
 ART_KEY, ART_PATH = 257, 258  # item data roles on the Title cell
@@ -67,12 +68,9 @@ class LibraryPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSortingEnabled(True)
-        self.table.setIconSize(QSize(THUMB, THUMB))
-        self.table.verticalHeader().setDefaultSectionSize(THUMB + 6)
+        style_track_table(self.table, {0: NUMBER, 1: TITLE, 2: TEXT, 3: MUTED, 4: NUMBER, 5: MUTED},
+                          {0: 48, 4: 64, 5: 96}, weights={1: 4, 2: 3, 3: 3})
         self.table.currentCellChanged.connect(lambda row, *_: self._show_selected(row))
-        hh = self.table.horizontalHeader()
-        for col in (1, 2, 3):
-            hh.setSectionResizeMode(col, QHeaderView.Stretch)
         open_btn = QPushButton("Open library folder")
         open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.library.root))))
         delete_btn = QPushButton("Delete selected songs")

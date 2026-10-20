@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QAbstractItemView, QComboBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -13,6 +13,7 @@ from .. import auth
 from ..pipeline import Status, TrackEvent
 from ..ytm import Collection, Resolver
 from . import workers
+from .table_style import MUTED, TEXT, TITLE, style_track_table
 from .login import LoginDialog
 
 STATUS_COLORS = {Status.DONE: "#27ae60", Status.SKIPPED: "#7f8c8d", Status.FAILED: "#c0392b"}
@@ -79,10 +80,7 @@ class YtmPage(QWidget):
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        hh = self.table.horizontalHeader()
-        for col in range(3):
-            hh.setSectionResizeMode(col, QHeaderView.Stretch)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        style_track_table(self.table, {0: TITLE, 1: TEXT, 2: MUTED, 3: TEXT}, {3: 190}, weights={0: 4, 1: 3, 2: 3})
         self.overall = QProgressBar()
         self.overall.setFormat("%v / %m")
         self.cancel_btn = QPushButton("Cancel")

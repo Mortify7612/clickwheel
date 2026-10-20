@@ -11,7 +11,8 @@ datas = (
     collect_data_files("ytmusicapi")           # locale files
     + collect_data_files("yt_dlp_ejs")         # YouTube challenge solver scripts
     + collect_data_files("pypodlib")           # calcHashAB.wasm (Nano 6G/7G)
-    + [(os.path.join(SPECPATH, "..", "src", "clickwheel", "assets", "clickwheel.png"), "clickwheel/assets")]
+    + [(os.path.join(SPECPATH, "..", "src", "clickwheel", "assets", "clickwheel.png"), "clickwheel/assets"),
+       (os.path.join(SPECPATH, "..", "src", "clickwheel", "assets", "fonts"), "clickwheel/assets/fonts")]
 )
 ICONS = os.path.join(SPECPATH, "icons")
 # wasmtime loads its native lib from wasmtime/<platform>/ via ctypes; PyInstaller's

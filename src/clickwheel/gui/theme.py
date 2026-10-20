@@ -14,13 +14,14 @@ BEVEL_LIGHT = "#767684"
 BEVEL_DARK = "#0a0a0e"
 LCD_BG = "#000000"
 LCD_TEXT = "#00e64d"
+LIST_TEXT = "#c4f2d2"  # softer than LCD green so the quieter text tiers can fade from it
 LCD_DIM = "#0b5c24"
 SELECT_BG = "#1f3bbd"
 SELECT_TEXT = "#ffffff"
 ACCENT = "#e8b923"
 TEXT = "#d6d6de"
 MUTED = "#8a8a96"
-MONO = '"DejaVu Sans Mono", "Menlo", "Consolas", "Liberation Mono", monospace'
+MONO = '"JetBrains Mono", "DejaVu Sans Mono", "Menlo", "Consolas", monospace'
 
 RAISED = f"border: 1px solid; border-color: {BEVEL_LIGHT} {BEVEL_DARK} {BEVEL_DARK} {BEVEL_LIGHT};"
 SUNKEN = f"border: 1px solid; border-color: {BEVEL_DARK} {BEVEL_LIGHT} {BEVEL_LIGHT} {BEVEL_DARK};"
@@ -56,21 +57,29 @@ QPushButton:disabled {{ color: #64646e; background: #2d2d35; border-color: #4444
 QPushButton:default {{ color: {ACCENT}; }}
 
 QLineEdit, QPlainTextEdit, QTextBrowser, QSpinBox, QComboBox {{
-    background: {LCD_BG}; color: {LCD_TEXT}; {SUNKEN} padding: 3px;
-    selection-background-color: {SELECT_BG}; selection-color: {SELECT_TEXT}; font-family: {MONO}; }}
+    background: {LCD_BG}; color: {LCD_TEXT}; {SUNKEN} padding: 4px 6px;
+    selection-background-color: {SELECT_BG}; selection-color: {SELECT_TEXT}; }}
+QPlainTextEdit {{ font-family: {MONO}; }}
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color: {LCD_DIM}; }}
 QComboBox::drop-down {{ background: #3e3e49; width: 18px; border-left: 1px solid {BEVEL_DARK}; }}
 QComboBox QAbstractItemView {{ background: {LCD_BG}; color: {LCD_TEXT}; selection-background-color: {SELECT_BG};
-                               font-family: {MONO}; {RAISED} }}
+                               {RAISED} }}
 
 QTableView, QTableWidget, QListView, QListWidget {{
-    background: {LCD_BG}; alternate-background-color: #050a06; color: {LCD_TEXT};
-    gridline-color: #10261a; {SUNKEN} font-family: {MONO};
+    background: {LCD_BG}; alternate-background-color: #050a06; color: {LIST_TEXT};
+    gridline-color: #10261a; {SUNKEN}
     selection-background-color: {SELECT_BG}; selection-color: {SELECT_TEXT}; outline: 0; }}
+QListView::item, QListWidget::item {{ padding: 6px 8px; margin: 1px 3px; border-radius: 3px; }}
+QListView::item:hover, QListWidget::item:hover {{ background: #0e1a12; }}
+QListView::item:selected, QListWidget::item:selected {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3553d6, stop:1 #1a32a8); color: {SELECT_TEXT}; }}
 QTableView:disabled, QListView:disabled {{ color: {LCD_DIM}; }}
 QTableCornerButton::section {{ background: #2a2a33; border: 1px solid {BEVEL_DARK}; }}
-QHeaderView::section {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3c3c48, stop:1 #24242c);
-                        color: {ACCENT}; {RAISED} padding: 3px 6px; font-weight: bold; }}
+QHeaderView {{ background: #111116; }}
+QHeaderView::section {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22222a, stop:1 #15151b);
+                        color: {ACCENT}; border: none; border-bottom: 1px solid #3a3a46;
+                        border-right: 1px solid #1c1c23; padding: 0 10px; }}
+QHeaderView::section:hover {{ color: #ffd866; }}
 
 QProgressBar {{ background: {LCD_BG}; {SUNKEN} color: #f2fff5; text-align: center; min-height: 16px;
                 font-family: {MONO}; font-weight: bold; }}
