@@ -53,9 +53,14 @@ class DevicePage(QWidget):
         self.model = QLabel("—")
         self.firmware = QLabel("—")
         self.space = QLabel("—")
+        self.ro_warning = QLabel()
+        self.ro_warning.setWordWrap(True)
+        self.ro_warning.setStyleSheet("color: #c0392b;")
+        self.ro_warning.hide()
         form.addRow("Model", self.model)
         form.addRow("Firmware", self.firmware)
         form.addRow("Storage", self.space)
+        form.addRow(self.ro_warning)
 
         what = QGroupBox("What to sync")
         wv = QVBoxLayout(what)
@@ -175,6 +180,15 @@ class DevicePage(QWidget):
             self.space.setText("—")
             return
         self.model.setText(dev.model)
+        read_only = dev.read_only
+        self.ro_warning.setVisible(read_only)
+        if read_only:
+            self.ro_warning.setText(
+                "This iPod is mounted read-only — usually because the system found filesystem errors "
+                "(for example after it was unplugged without ejecting). Syncing and editing are off until "
+                "it's repaired: on Linux, eject it, then run  sudo fsck.vfat -a /dev/<device>  and plug it back in.")
+        self.sync_btn.setEnabled(not read_only and not self._editing)
+        self.browser.set_busy(read_only or self._syncing)
         fw = "Rockbox" if dev.firmware == "rockbox" else "Apple"
         if dev.firmware == "rockbox" and dev.has_apple_db:
             fw += " (dual-boot; " + ("syncing files" if self.settings.rockbox_prefers_files else "syncing Apple DB") + ")"

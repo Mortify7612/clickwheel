@@ -10,6 +10,7 @@ intended device selected.
 from __future__ import annotations
 
 import functools
+import os
 import threading
 from contextlib import contextmanager
 
@@ -41,3 +42,11 @@ def on_device(method):
             return method(self, *args, **kwargs)
 
     return wrapper
+
+
+def is_read_only(path) -> bool:
+    """True when the volume is mounted read-only (e.g. the kernel found FAT errors)."""
+    try:
+        return bool(os.statvfs(path).f_flag & os.ST_RDONLY)
+    except (OSError, AttributeError):  # AttributeError: no statvfs on Windows
+        return False

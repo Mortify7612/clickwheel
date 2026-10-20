@@ -26,6 +26,12 @@ class Device:
         tag = " · Rockbox" if self.firmware == "rockbox" else ""
         return f"{self.name} — {self.model}{tag} ({self.path})"
 
+    @property
+    def read_only(self) -> bool:
+        from ._session import is_read_only
+
+        return is_read_only(self.path)
+
     def free_space(self) -> tuple[int, int]:
         usage = shutil.disk_usage(self.path)
         return usage.free, usage.total

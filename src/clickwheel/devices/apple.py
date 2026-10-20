@@ -20,7 +20,7 @@ from pypodlib.sync import playlist_parser
 from pypodlib.sync.sync_executor import SyncExecutor
 
 from . import itunessd
-from ._session import on_device
+from ._session import is_read_only, on_device
 from .contents import ArtworkRef, DeviceContents, DevicePlaylist, DeviceTrack
 
 ProgressFn = Callable[[str, int, int], None]
@@ -327,7 +327,7 @@ class AppleSync:
         ]
         shuffle = bool(getattr(self.ipod.capabilities, "is_shuffle", False))
         notice = ""
-        if shuffle and (listed := self._itunessd_track_count()) != len(tracks):
+        if shuffle and not is_read_only(self.ipod.path) and (listed := self._itunessd_track_count()) != len(tracks):
             # Shuffles only play what iTunesSD lists. If a sync was cut off after the
             # database was written (e.g. the app was closed mid-sync), rebuild it.
             self.write_itunessd()
