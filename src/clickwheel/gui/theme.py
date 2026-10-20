@@ -94,6 +94,15 @@ QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #7dffa6, stop:1 #00a83a); }}
 QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {{ background: #101014; }}
 
+QSlider::groove:horizontal {{ background: {LCD_BG}; {SUNKEN} height: 6px; }}
+QSlider::sub-page:horizontal {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #27a552, stop:1 #0d5f29);
+                                 {SUNKEN} height: 6px; }}
+QSlider::handle:horizontal {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #8a8a98, stop:1 #4a4a55);
+                              {RAISED} width: 12px; margin: -5px 0; }}
+QSlider::handle:horizontal:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #a0a0ae, stop:1 #55555f); }}
+QSlider:disabled {{ }}
+QPushButton:checked {{ background: #1c1c22; {SUNKEN} color: {LCD_TEXT}; }}
+
 QSplitter::handle {{ background: {WINDOW}; }}
 QStatusBar {{ background: {LCD_BG}; color: {LCD_TEXT}; font-family: {MONO}; border-top: 1px solid {BEVEL_LIGHT}; }}
 QStatusBar QLabel {{ color: {LCD_TEXT}; }}

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 
 from PySide6.QtCore import QPoint, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (
@@ -60,7 +61,13 @@ class LcdDisplay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(84)
-        self._message = "READY"
+        self._status = ""            # latest status message (downloads, sync, ...)
+        self._status_until = 0.0     # show it until then, unless something is busy
+        self._now_playing = ""
+        self._play_state = "stopped"
+        self._clock = ""             # "1:23 / 3:45"
+        self._spectrum: list[float] | None = None  # live levels while music plays
+        self._message = "READY"      # what the ticker currently shows
         self._offset = 0      # marquee scroll, in whole dots
         self._busy: set[str] = set()  # e.g. {"downloads", "sync"}
         self._levels = [0.05] * BARS
@@ -77,11 +84,35 @@ class LcdDisplay(QWidget):
     # ── API ──────────────────────────────────────────────────────────────
 
     def set_message(self, text: str) -> None:
-        text = " ".join((text or "").split()).upper() or "READY"
-        if text != self._message:
-            self._message = text
-            self._offset = 0
-            self.update()
+        """Show a status message; it gives way to the playing song after a few seconds."""
+        self._status = " ".join((text or "").split()).upper()
+        self._status_until = time.monotonic() + 6
+
+    def set_now_playing(self, label: str, state: str) -> None:
+        label = " ".join((label or "").split()).upper()
+        if state == "playing" and label != self._now_playing:
+            self._status_until = 0.0  # a new song takes over the ticker straight away
+        self._now_playing = label
+        self._play_state = state
+        if state != "playing":
+            self._spectrum = None
+
+    def set_clock(self, position_ms: int, duration_ms: int) -> None:
+        def fmt(ms: int) -> str:
+            s = max(0, ms // 1000)
+            return f"{s // 60}:{s % 60:02d}"
+
+        self._clock = f"{fmt(position_ms)} / {fmt(duration_ms)}" if duration_ms > 0 else fmt(position_ms)
+
+    def set_spectrum(self, levels: list[float]) -> None:
+        self._spectrum = list(levels) if self._play_state == "playing" and any(levels) else None
+
+    def _ticker_text(self) -> str:
+        if self._status and (self._busy or time.monotonic() < self._status_until):
+            return self._status
+        if self._now_playing:
+            return self._now_playing
+        return self._status or "READY"
 
     def set_busy(self, source: str, busy: bool) -> None:
         if busy:
@@ -114,7 +145,18 @@ class LcdDisplay(QWidget):
     def _tick(self) -> None:
         self._phase += 0.25
         self._blink = (self._blink + 1) % 16
+        message = self._ticker_text()
+        if message != self._message:
+            self._message, self._offset = message, 0
+        spectrum = self._spectrum
         for i in range(BARS):
+            if spectrum is not None:
+                target = spectrum[i] if i < len(spectrum) else 0.0
+                # Real meters jump up fast and fall back slowly.
+                rate = 0.7 if target > self._levels[i] else 0.18
+                self._levels[i] += (target - self._levels[i]) * rate
+                self._peaks[i] = max(self._levels[i], self._peaks[i] - 0.02)
+                continue
             if self._active:
                 # Wandering bands of energy, so it looks lively without real audio.
                 target = 0.2 + 0.6 * abs(math.sin(self._phase * 0.5 + i * 0.5)) * random.uniform(0.55, 1.0)
@@ -142,11 +184,19 @@ class LcdDisplay(QWidget):
         p.setFont(self._title_font)
         p.setPen(LIT)
         p.drawText(QRect(2, 0, cols, top_h), Qt.AlignLeft | Qt.AlignVCenter, TITLE)
+        title_w = QFontMetrics(self._title_font).horizontalAdvance(TITLE)
+        small = _dot_font(8, bold=True)
+        p.setFont(small)
         if self._active and self._blink < 11:  # blinking busy lamp
-            title_w = QFontMetrics(self._title_font).horizontalAdvance(TITLE)
-            p.setFont(_dot_font(8, bold=True))
             p.setPen(AMBER)
             p.drawText(QRect(title_w + 8, 0, 60, top_h), Qt.AlignLeft | Qt.AlignVCenter, "◆ BUSY")
+        if self._play_state != "stopped" or self._clock:
+            icon = {"playing": "▶", "paused": "❚❚"}.get(self._play_state, "■")
+            # Paused: blink the clock, like a hardware deck.
+            if self._play_state != "paused" or self._blink < 10:
+                p.setPen(LIT)
+                p.drawText(QRect(0, 0, self._ticker_cols(), top_h), Qt.AlignRight | Qt.AlignVCenter,
+                           f"{icon} {self._clock}")
 
         # Marquee on the bottom line, clipped to the area left of the meter.
         ticker = QRect(2, top_h, self._ticker_cols(), rows - top_h)
@@ -174,7 +224,7 @@ class LcdDisplay(QWidget):
                 frac = r / max(1, meter_rows - 1)
                 color = RED if frac > 0.82 else AMBER if frac > 0.62 else LIT
                 p.fillRect(x, rows - 2 - r, 2, 1, color)
-            if self._active:
+            if self._active or self._spectrum is not None:
                 peak = min(meter_rows - 1, int(self._peaks[i] * meter_rows))
                 p.fillRect(x, rows - 2 - peak, 2, 1, QColor("#d9ffe6"))
         p.end()

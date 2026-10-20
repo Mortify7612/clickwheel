@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, QLocale, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QIcon
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -31,6 +31,7 @@ class SortKeyItem(QTableWidgetItem):
 
 class LibraryPage(QWidget):
     sync_requested = Signal(list)  # library file paths to add to the current iPod
+    play_requested = Signal(list, int)  # PlayItems in view order, index to start at
 
     def __init__(self, library: Library, manager: workers.DownloadManager):
         super().__init__()
@@ -39,6 +40,7 @@ class LibraryPage(QWidget):
         self.covers = CoverCache(self)
         self.covers.loaded.connect(self._on_cover)
         self._art_items: dict[str, list[QTableWidgetItem]] = {}
+        self._now_path: str | None = None
 
         self.lists = QListWidget()
         self.lists.currentItemChanged.connect(lambda *_: self._show_tracks())
@@ -81,7 +83,9 @@ class LibraryPage(QWidget):
         self.table.itemSelectionChanged.connect(
             lambda: self.sync_btn.setEnabled(bool(self.table.selectedIndexes())))
         self.sync_btn.setEnabled(False)
-        for label, slot in (("Sync to iPod", self._sync_selected), ("Delete from library…", self._delete_selected)):
+        self.table.doubleClicked.connect(lambda index: self._play_from(index.row()))
+        for label, slot in (("Play", lambda: self._play_from(self.table.currentRow())),
+                            ("Sync to iPod", self._sync_selected), ("Delete from library…", self._delete_selected)):
             action = QAction(label, self.table)
             action.triggered.connect(slot)
             self.table.addAction(action)
@@ -160,6 +164,7 @@ class LibraryPage(QWidget):
             self._art_items.setdefault(key, []).append(title)
             self.covers.request(key, self.library.root / t.relpath)
         self.table.setSortingEnabled(pid == ALL)
+        self._mark_now_playing()
         self._show_selected(self.table.currentRow())
         minutes = sum(t.duration for t in tracks) // 60
         self.summary.setText(f"{len(tracks)} songs · {minutes // 60} h {minutes % 60} min")
@@ -170,7 +175,13 @@ class LibraryPage(QWidget):
         for item in self._art_items.get(key, []):
             item.setIcon(icon)
 
+    def _row_path(self, row: int) -> str | None:
+        title = self.table.item(row, 1)
+        return title.data(ART_PATH) if title is not None else None
+
     def _show_selected(self, row: int) -> None:
+        if row < 0 and self._now_path:  # nothing selected: show what's playing
+            row = self._now_playing_row()
         title = self.table.item(row, 1) if row >= 0 else None
         if title is None:
             self.art.show_track(None)
@@ -183,6 +194,47 @@ class LibraryPage(QWidget):
         for row in range(self.table.rowCount()):
             hay = " ".join(self.table.item(row, c).text() for c in (1, 2, 3)).casefold()
             self.table.setRowHidden(row, bool(needle) and needle not in hay)
+
+    def _play_from(self, row: int) -> None:
+        """Queue every visible song in the order shown, starting at ``row``."""
+        from .player import PlayItem
+
+        items, start = [], 0
+        for r in range(self.table.rowCount()):
+            if self.table.isRowHidden(r):
+                continue
+            track = self.library.track(self.table.item(r, 0).data(256))
+            if track is None:
+                continue
+            if r == row:
+                start = len(items)
+            items.append(PlayItem(self.library.root / track.relpath, track.title, track.artist, track.album))
+        if items and row >= 0:
+            self.play_requested.emit(items, start)
+
+    # ── Now playing ──────────────────────────────────────────────────────
+
+    def set_now_playing(self, path) -> None:
+        self._now_path = str(path) if path else None
+        self._mark_now_playing()
+        if self.table.currentRow() < 0 or not self.table.selectedIndexes():
+            self._show_selected(-1)
+
+    def _mark_now_playing(self) -> None:
+        accent = self.palette().color(QPalette.Link)
+        for row in range(self.table.rowCount()):
+            playing = self._now_path is not None and self._row_path(row) == self._now_path
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                if item is None:
+                    continue
+                font = item.font()
+                font.setBold(playing)
+                item.setFont(font)
+                item.setData(Qt.ForegroundRole, accent if playing else None)
+
+    def _now_playing_row(self) -> int:
+        return next((r for r in range(self.table.rowCount()) if self._row_path(r) == self._now_path), -1)
 
     def _sync_selected(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})

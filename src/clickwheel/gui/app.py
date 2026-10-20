@@ -15,7 +15,9 @@ from .._version import __version__
 from ..config import APP_NAME, DB_FILE, Settings
 from ..library import Library
 from .device_page import DevicePage
-from .lcd import LcdDisplay
+from .lcd import BARS, LcdDisplay
+from .player import Player
+from .player_bar import PlayerBar
 from .library_page import LibraryPage
 from .theme import THEMES, apply_theme
 from .update_dialog import check_for_updates
@@ -111,11 +113,14 @@ class MainWindow(QMainWindow):
         tabs.currentChanged.connect(lambda i: i == 2 and self.device_page.refresh_choices())
         # Retro LCD strip above the tabs: status ticker plus a level meter while busy.
         self.lcd = LcdDisplay()
+        self.player = Player(BARS, self)
+        self.player_bar = PlayerBar(self.player)
         central = QWidget()
         column = QVBoxLayout(central)
         column.setContentsMargins(6, 4, 6, 0)
         column.setSpacing(4)
         column.addWidget(self.lcd)
+        column.addWidget(self.player_bar)
         column.addWidget(tabs, 1)
         self.setCentralWidget(central)
         self._tabs = tabs
@@ -164,6 +169,19 @@ class MainWindow(QMainWindow):
         self.manager.track_event.connect(on_track)
         self.device_page.busy.connect(lambda busy: lcd.set_busy("sync", busy))
         self.device_page.activity.connect(lcd.set_message)
+
+        # Playback drives the ticker, clock and (real) spectrum meter.
+        player = self.player
+        player.track_changed.connect(lambda item: lcd.set_now_playing(item.label if item else "", "playing"))
+        player.state_changed.connect(
+            lambda state: lcd.set_now_playing(player.current.label if player.current else "", state))
+        player.position_changed.connect(lcd.set_clock)
+        player.spectrum.connect(lcd.set_spectrum)
+        player.error.connect(lambda msg: self.statusBar().showMessage(msg, 8000))
+        self.library_page.play_requested.connect(player.play_queue)
+        for page in (self.library_page, self.device_page.browser):
+            player.track_changed.connect(lambda item, page=page: page.set_now_playing(item.path if item else None))
+        self.device_page.browser.play_requested.connect(player.play_queue)
 
     def closeEvent(self, event) -> None:
         # Sync and edit threads die with the process: quitting mid-write can leave a

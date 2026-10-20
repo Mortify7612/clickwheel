@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Signal
-from PySide6.QtGui import QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtGui import QIcon, QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
@@ -47,6 +47,7 @@ class DeleteDialog(QDialog):
 
 class DeviceBrowser(QWidget):
     editing = Signal(bool)       # an edit is being written to the device
+    play_requested = Signal(list, int)  # PlayItems in view order, index to start at
     library_edited = Signal()    # the local library changed as a side effect
 
     def __init__(self, library: Library | None = None):
@@ -64,6 +65,7 @@ class DeviceBrowser(QWidget):
         self._art_items: dict[str, list[QTableWidgetItem]] = {}
         self._list_row = 0
         self._note_after_load = ""  # confirmation to show once the reload finishes
+        self._now_path: str | None = None
 
         self.lists = QListWidget()
         self.lists.currentRowChanged.connect(self._on_list_changed)
@@ -89,6 +91,7 @@ class DeviceBrowser(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(THUMB + 6)
         self.table.currentCellChanged.connect(lambda row, *_: self._show_selected(row))
         self.table.itemSelectionChanged.connect(self._update_buttons)
+        self.table.doubleClicked.connect(lambda index: self._play_from(index.row()))
         hh = self.table.horizontalHeader()
         for col in (1, 2, 3):
             hh.setSectionResizeMode(col, QHeaderView.Stretch)
@@ -257,6 +260,7 @@ class DeviceBrowser(QWidget):
                 self.covers.request(key, source)
         self.table.setHorizontalHeaderItem(0, QTableWidgetItem("Pos" if self._reorderable() else "#"))
         self.table.setSortingEnabled(not self._reorderable())
+        self._mark_now_playing()
         if select:
             for row in select:
                 self.table.selectRow(row)
@@ -331,6 +335,24 @@ class DeviceBrowser(QWidget):
 
         workers.run(fn, *args, on_done=finished, on_error=failed)
 
+    def _play_from(self, row: int) -> None:
+        from .player import PlayItem
+
+        if self._device is None or row < 0:
+            return
+        items, start = [], 0
+        for r in range(self.table.rowCount()):
+            if self.table.isRowHidden(r):
+                continue
+            t = self._contents.tracks[self.table.item(r, 0).data(TRACK_INDEX)]
+            if not t.location:
+                continue
+            if r == row:
+                start = len(items)
+            items.append(PlayItem(self._device.path / t.location.lstrip("/"), t.title, t.artist, t.album))
+        if items:
+            self.play_requested.emit(items, start)
+
     def _save_order(self) -> None:
         which = self._which()
         playlist = self._contents.playlists[which] if which != ALL else None
@@ -380,6 +402,30 @@ class DeviceBrowser(QWidget):
         self._dirty = False
         self._start_edit(self._backend.delete_tracks, {t.location for t in tracks}, on_done=deleted)
 
+    # ── Now playing ──────────────────────────────────────────────────────
+
+    def set_now_playing(self, path) -> None:
+        self._now_path = str(path) if path else None
+        self._mark_now_playing()
+        if self.table.currentRow() < 0 or not self.table.selectedIndexes():
+            self._show_selected(-1)
+
+    def _mark_now_playing(self) -> None:
+        accent = self.palette().color(QPalette.Link)
+        for row in range(self.table.rowCount()):
+            playing = self._now_path is not None and self._row_path(row) == self._now_path
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                if item is None:
+                    continue
+                font = item.font()
+                font.setBold(playing)
+                item.setFont(font)
+                item.setData(Qt.ForegroundRole, accent if playing else None)
+
+    def _now_playing_row(self) -> int:
+        return next((r for r in range(self.table.rowCount()) if self._row_path(r) == self._now_path), -1)
+
     # ── Covers / filter ──────────────────────────────────────────────────
 
     def _on_cover(self, key: str) -> None:
@@ -387,7 +433,16 @@ class DeviceBrowser(QWidget):
         for item in self._art_items.get(key, []):
             item.setIcon(icon)
 
+    def _row_path(self, row: int) -> str | None:
+        num = self.table.item(row, 0)
+        if num is None or self._device is None:
+            return None
+        track = self._contents.tracks[num.data(TRACK_INDEX)]
+        return str(self._device.path / track.location.lstrip("/")) if track.location else None
+
     def _show_selected(self, row: int) -> None:
+        if row < 0 and self._now_path:  # nothing selected: show what's playing
+            row = self._now_playing_row()
         title = self.table.item(row, 1) if row >= 0 else None
         if title is None:
             self.art.show_track(None)

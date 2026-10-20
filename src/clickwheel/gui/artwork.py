@@ -88,13 +88,15 @@ class CoverCache(QObject):
         self._thumbs: dict[str, QPixmap] = {}
         self._large: dict[str, QPixmap] = {}
         self._pending: set[str] = set()
+        self._missing: set[str] = set()  # no art found last time; worth retrying later
         self._decoded.connect(self._store)
 
     def request(self, key: str, source) -> None:
         """``source`` is an audio file path, or anything with ``load_png()``
         (an iPod ArtworkDB reference)."""
-        if key in self._thumbs or key in self._pending:
+        if key in self._pending or (key in self._thumbs and key not in self._missing):
             return
+        self._missing.discard(key)
         self._pending.add(key)
         self._pool.submit(self._load, key, source)
 
@@ -116,6 +118,7 @@ class CoverCache(QObject):
         if image is None:
             self._thumbs[key] = placeholder(key, THUMB)
             self._large[key] = placeholder(key, LARGE)
+            self._missing.add(key)  # the file may gain art later (re-download, retag)
         else:
             self._thumbs[key] = _rounded(image, THUMB, 5)
             self._large[key] = _rounded(image, LARGE, 14)
@@ -133,6 +136,7 @@ class CoverCache(QObject):
     def clear(self) -> None:
         self._thumbs.clear()
         self._large.clear()
+        self._missing.clear()
 
 
 def album_key(album_artist: str, album: str) -> str:
