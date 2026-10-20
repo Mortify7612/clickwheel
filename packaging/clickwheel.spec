@@ -11,7 +11,9 @@ datas = (
     collect_data_files("ytmusicapi")           # locale files
     + collect_data_files("yt_dlp_ejs")         # YouTube challenge solver scripts
     + collect_data_files("pypodlib")           # calcHashAB.wasm (Nano 6G/7G)
+    + [(os.path.join(SPECPATH, "..", "src", "clickwheel", "assets", "clickwheel.png"), "clickwheel/assets")]
 )
+ICONS = os.path.join(SPECPATH, "icons")
 # wasmtime loads its native lib from wasmtime/<platform>/ via ctypes; PyInstaller's
 # dynamic-lib collector skips it, so ship it at the same relative path.
 _wasmtime_dir = os.path.dirname(wasmtime.__file__)
@@ -54,6 +56,7 @@ exe = EXE(
     name="Clickwheel",
     console=False,
     upx=False,
+    icon=os.path.join(ICONS, "clickwheel.ico"),
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="Clickwheel", upx=False)
 
@@ -62,6 +65,7 @@ if sys.platform == "darwin":
         coll,
         name="Clickwheel.app",
         bundle_identifier="io.github.captainslow48.clickwheel",
+        icon=os.path.join(ICONS, "clickwheel.icns"),
         info_plist={
             "CFBundleShortVersionString": _version,
             "NSHighResolutionCapable": True,

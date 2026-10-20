@@ -29,6 +29,7 @@ def cli(argv: list[str]) -> int:
     dl.add_argument("url", nargs="+")
     dl.add_argument("--account", help="account to use (default: the active one)")
     sub.add_parser("devices", help="list connected iPods")
+    sub.add_parser("install-desktop", help="Linux: add Clickwheel (with its icon) to your app launcher")
     sync = sub.add_parser("sync", help="sync the library to an iPod")
     sync.add_argument("--device", help="mount path (default: first detected)")
     args = parser.parse_args(argv)
@@ -87,6 +88,11 @@ def cli(argv: list[str]) -> int:
                               cookies=auth.cookies_file(profile),
                               profile_id=profile.id if profile else "").run(collection, show)
             print("  " + ", ".join(f"{n} {s.value.lower()}" for s, n in counts.items()))
+    elif args.cmd == "install-desktop":
+        from .desktop import install_desktop_entry
+
+        for path in install_desktop_entry():
+            print("wrote", path)
     elif args.cmd == "devices":
         from .devices import scan
 

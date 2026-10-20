@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QVBoxLayout, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QSpinBox, QTabWidget, QWidget,
@@ -23,6 +24,9 @@ from .theme import THEMES, apply_theme
 from .update_dialog import check_for_updates
 from .workers import DownloadManager
 from .ytm_page import YtmPage
+
+
+ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "clickwheel.png"
 
 
 class SettingsDialog(QDialog):
@@ -208,6 +212,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName("clickwheel")
+    app.setWindowIcon(QIcon(str(ICON_PATH)))
     apply_theme(app, Settings.load().theme)
     window = MainWindow()
     window.show()
