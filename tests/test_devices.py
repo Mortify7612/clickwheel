@@ -310,3 +310,29 @@ def test_sync_uses_its_own_device_even_after_scanning_another(library, tmp_path)
     assert summary.ok, summary.errors
     assert len(classic.backend().browse().tracks) == 3
     assert all(t.artwork is not None for t in classic.backend().browse().tracks)
+
+
+def test_shuffle_repairs_stale_itunessd_and_delete_cleans_mapping(library, tmp_path, caplog):
+    import struct
+
+    from pypodlib.sync.mapping import MappingManager
+
+    from clickwheel.devices import itunessd
+
+    dev = _virtual(tmp_path, "MC751")
+    backend = dev.backend()
+    backend.sync(library.root)
+    # Simulate a sync cut off after the database write: iTunesSD lists only one song.
+    itunessd.write(dev.path, 2, [itunessd.SdTrack(backend.browse().tracks[0].location)], [])
+    contents = backend.browse()
+    assert "Repaired" in contents.notice
+    sd = (dev.path / "iPod_Control" / "iTunes" / "iTunesSD").read_bytes()
+    assert struct.unpack_from("<I", sd, 12)[0] == 3
+    assert backend.browse().notice == ""  # healthy now
+
+    gone = contents.tracks[0]
+    backend.delete_tracks({gone.location})
+    assert MappingManager(str(dev.path)).load().track_count == 2
+    caplog.clear()
+    assert backend.sync(library.root).ok
+    assert "stale" not in caplog.text

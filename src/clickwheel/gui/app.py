@@ -128,6 +128,20 @@ class MainWindow(QMainWindow):
         status.showMessage(f"Library: {self.library.root}")
         QTimer.singleShot(3000, lambda: check_for_updates(self, self.settings, manual=False))
 
+    def closeEvent(self, event) -> None:
+        # Sync and edit threads die with the process: quitting mid-write can leave a
+        # database without its iTunesSD (a Shuffle then plays almost nothing).
+        page = self.device_page
+        if page._syncing or page._editing:
+            answer = QMessageBox.warning(
+                self, "Clickwheel is writing to your iPod",
+                "Quitting now can leave the iPod's music list half-written. Wait for it to finish?",
+                QMessageBox.Ok | QMessageBox.Discard, QMessageBox.Ok)
+            if answer != QMessageBox.Discard:
+                event.ignore()
+                return
+        event.accept()
+
     def _settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)
         if dlg.exec() and dlg.apply():

@@ -65,3 +65,4 @@ class DeviceContents:
     # Whether the order of the full song list means anything on this device
     # (Shuffle play order); other iPods always list songs alphabetically.
     ordered_library: bool = False
+    notice: str = ""  # something the browser fixed while reading, worth telling the user

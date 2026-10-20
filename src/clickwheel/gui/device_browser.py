@@ -169,7 +169,7 @@ class DeviceBrowser(QWidget):
     def _set_contents(self, contents: DeviceContents, note: str = "") -> None:
         self._contents = contents
         self._dirty = False
-        note = note or self._note_after_load
+        note = note or self._note_after_load or contents.notice
         self._note_after_load = ""
         self.covers.clear()  # a different device (or a re-sync) may have different art
         self.refresh_btn.setEnabled(True)

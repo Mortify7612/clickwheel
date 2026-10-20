@@ -325,7 +325,26 @@ class AppleSync:
             DevicePlaylist(p.name, [index_by_dbid[i] for i in p.track_ids if i in index_by_dbid], _playlist_key(p))
             for p in lib.playlists if not p.master
         ]
-        return DeviceContents(tracks, playlists, ordered_library=bool(getattr(self.ipod.capabilities, "is_shuffle", False)))
+        shuffle = bool(getattr(self.ipod.capabilities, "is_shuffle", False))
+        notice = ""
+        if shuffle and (listed := self._itunessd_track_count()) != len(tracks):
+            # Shuffles only play what iTunesSD lists. If a sync was cut off after the
+            # database was written (e.g. the app was closed mid-sync), rebuild it.
+            self.write_itunessd()
+            notice = (f"Repaired the Shuffle's song list: it listed {listed or 0} of {len(tracks)} songs, "
+                      "so the Shuffle could only play those.")
+        return DeviceContents(tracks, playlists, ordered_library=shuffle, notice=notice)
+
+    def _itunessd_track_count(self) -> int | None:
+        path = Path(self.ipod.path) / "iPod_Control" / "iTunes" / "iTunesSD"
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return None
+        version = getattr(self.ipod.capabilities, "shadow_db_version", 0) or 2
+        if version == 1:
+            return int.from_bytes(data[:3], "big") if len(data) >= 3 else None
+        return int.from_bytes(data[12:16], "little") if data[:4] == b"bdhs" else None
 
     # ── Editing what's on the device ─────────────────────────────────────
 
@@ -348,6 +367,13 @@ class AppleSync:
         root = Path(self.ipod.path)
         for t in doomed:
             (root / _loc(t).lstrip("/")).unlink(missing_ok=True)
+        # Drop pyPodLib's sync records for them too, or every later sync reports them as stale.
+        from pypodlib.sync.mapping import MappingManager
+
+        manager = MappingManager(self.ipod.path)
+        mapping = manager.load()
+        if any([mapping.remove_by_db_track_id(t.db_track_id) for t in doomed]):
+            manager.save(mapping)
         return len(doomed)
 
     @on_device
