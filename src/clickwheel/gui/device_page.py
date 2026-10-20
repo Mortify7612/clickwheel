@@ -31,6 +31,7 @@ class DevicePage(QWidget):
         self.devices: list[Device] = []
         self._cancel = threading.Event()
         self._syncing = False
+        self._editing = False  # the browser is writing an edit to the device
         self._phase = ""
         self._browsed_path: Path | None = None
 
@@ -94,7 +95,8 @@ class DevicePage(QWidget):
         cols.addWidget(what, 2)
         layout.addLayout(cols, 2)
         layout.addLayout(actions)
-        self.browser = DeviceBrowser()
+        self.browser = DeviceBrowser(library)
+        self.browser.editing.connect(self._on_editing)
         self.bottom = QTabWidget()
         self.bottom.addTab(self.browser, "On this iPod")
         self.bottom.addTab(self.log, "Sync log")
@@ -113,7 +115,7 @@ class DevicePage(QWidget):
         workers.run(scan, on_done=self._set_devices, on_error=lambda m: self._log(f"Scan failed: {m}"))
 
     def _poll(self) -> None:
-        if not self._syncing and self.isVisible():
+        if not self._syncing and not self._editing and self.isVisible():
             self.rescan()
 
     def _set_devices(self, devices: list[Device], keep: Path | None = None) -> None:
@@ -228,6 +230,7 @@ class DevicePage(QWidget):
             return
 
         self._syncing = True
+        self.browser.set_busy(True)
         self._cancel.clear()
         self.sync_btn.setText("Cancel")
         self.eject_btn.setEnabled(False)
@@ -258,8 +261,14 @@ class DevicePage(QWidget):
             self._phase = phase
             self._log(phase)
 
+    def _on_editing(self, busy: bool) -> None:
+        self._editing = busy
+        self.sync_btn.setEnabled(not busy and self.current is not None)
+        self.eject_btn.setEnabled(not busy and self.current is not None)
+
     def _finish(self) -> None:
         self._syncing = False
+        self.browser.set_busy(False)
         self.sync_btn.setText("Sync")
         self.sync_btn.setEnabled(True)
         self.progress.setRange(0, 1)

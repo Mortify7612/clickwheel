@@ -54,9 +54,14 @@ class DeviceTrack:
 class DevicePlaylist:
     name: str
     track_indices: list[int] = field(default_factory=list)
+    id: str = ""  # backend-specific: Apple playlist id, Rockbox .m3u8 file name
 
 
 @dataclass
 class DeviceContents:
+    # Device order: on a Shuffle this is the play order when shuffle is off.
     tracks: list[DeviceTrack]
     playlists: list[DevicePlaylist]
+    # Whether the order of the full song list means anything on this device
+    # (Shuffle play order); other iPods always list songs alphabetically.
+    ordered_library: bool = False

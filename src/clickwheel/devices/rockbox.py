@@ -30,6 +30,34 @@ class RockboxSync:
     def browse(self) -> DeviceContents:
         return browse(self.mount)
 
+    def delete_tracks(self, locations: set[str]) -> int:
+        """Delete songs (device paths like "/Music/A/B/01 X.m4a") and drop them from playlists."""
+        removed = 0
+        for loc in locations:
+            path = self.mount / loc.lstrip("/")
+            if path.is_file():
+                path.unlink()
+                _prune_empty(path, self.music)
+                removed += 1
+        manifest = self._manifest()
+        manifest["tracks"] = {rel: sig for rel, sig in manifest.get("tracks", {}).items()
+                              if "/Music/" + rel not in locations}
+        self._save_manifest(manifest)
+        for m3u in self.playlists.glob("*.m3u*"):
+            lines = m3u.read_text(encoding="utf-8", errors="replace").splitlines()
+            kept = _without_entries(lines, locations)
+            if kept != lines:
+                m3u.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        return removed
+
+    def reorder(self, playlist_id: str | None, locations: list[str]) -> None:
+        if playlist_id is None:
+            raise RuntimeError("Rockbox has no fixed song order; reorder a playlist instead.")
+        m3u = self.playlists / playlist_id
+        header = [line for line in m3u.read_text(encoding="utf-8", errors="replace").splitlines()
+                  if line.startswith(("#EXTM3U", "#PLAYLIST"))]
+        m3u.write_text("\n".join([*header, *locations]) + "\n", encoding="utf-8")
+
     def _manifest(self) -> dict:
         try:
             return json.loads((self.mount / MANIFEST).read_text())
@@ -165,5 +193,17 @@ def browse(mount: Path) -> DeviceContents:
                     mount.resolve()).as_posix()
                 if path in index:
                     indices.append(index[path])
-        playlists.append(DevicePlaylist(name, indices))
+        playlists.append(DevicePlaylist(name, indices, m3u.name))
     return DeviceContents(tracks, playlists)
+
+
+def _without_entries(lines: list[str], locations: set[str]) -> list[str]:
+    """Drop playlist entries for ``locations`` (and their #EXTINF lines)."""
+    out: list[str] = []
+    for line in lines:
+        if line and not line.startswith("#") and line in locations:
+            if out and out[-1].startswith("#EXTINF"):
+                out.pop()
+            continue
+        out.append(line)
+    return out

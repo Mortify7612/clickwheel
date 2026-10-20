@@ -184,3 +184,84 @@ def test_finds_unmounted_ipod_volumes():
     usb_stick = {**shuffle, "name": "sdd", "path": "/dev/sdd", "vendor": "SanDisk", "model": "Cruzer"}
     data = {"blockdevices": [shuffle, classic, mounted, usb_stick]}
     assert unmounted_ipod_volumes(data) == ["/dev/sda", "/dev/sdb2"]
+
+
+def _titles(contents, indices=None):
+    return [contents.tracks[i].title for i in (indices if indices is not None else range(len(contents.tracks)))]
+
+
+def test_reorder_playlist_and_keep_it_through_sync(library, tmp_path):
+    dev = _virtual(tmp_path, "MC297")
+    backend = dev.backend()
+    backend.sync(library.root)
+    contents = backend.browse()
+    [road_trip] = contents.playlists
+    assert _titles(contents, road_trip.track_indices) == ["Other Single", "First Song"]
+    flipped = [contents.tracks[i].location for i in reversed(road_trip.track_indices)]
+
+    backend.reorder(road_trip.id, flipped)
+    contents = backend.browse()
+    assert _titles(contents, contents.playlists[0].track_indices) == ["First Song", "Other Single"]
+
+    # Mirror the order into the library (what the GUI does) so a sync keeps it.
+    ids = [library.find_track(t.title, t.artist, t.album).video_id
+           for t in (contents.tracks[i] for i in contents.playlists[0].track_indices)]
+    library.reorder_playlist("PLtest123456", ids)
+    assert backend.sync(library.root).ok
+    contents = backend.browse()
+    assert _titles(contents, contents.playlists[0].track_indices) == ["First Song", "Other Single"]
+
+
+def test_delete_from_ipod(library, tmp_path):
+    dev = _virtual(tmp_path, "MC297")
+    backend = dev.backend()
+    backend.sync(library.root)
+    target = next(t for t in backend.browse().tracks if t.title == "Other Single")
+    assert backend.delete_tracks({target.location}) == 1
+    contents = backend.browse()
+    assert "Other Single" not in _titles(contents)
+    assert _titles(contents, contents.playlists[0].track_indices) == ["First Song"]
+    assert not (dev.path / target.location.lstrip("/")).exists()
+    # Still in the library, so a full sync brings it back (the GUI warns about this).
+    summary = backend.sync(library.root)
+    assert summary.ok and summary.added == 1
+
+
+def test_shuffle_play_order(library, tmp_path):
+    import struct
+
+    dev = _virtual(tmp_path, "MC751")
+    backend = dev.backend()
+    backend.sync(library.root)
+    contents = backend.browse()
+    assert contents.ordered_library
+    wanted = sorted(contents.tracks, key=lambda t: t.title, reverse=True)
+    backend.reorder(None, [t.location for t in wanted])
+    contents = backend.browse()
+    assert _titles(contents) == ["Second: Song?", "Other Single", "First Song"]
+    sd = (dev.path / "iPod_Control" / "iTunes" / "iTunesSD").read_bytes()
+    first = struct.unpack_from("<I", sd, 64 + 20)[0]
+    assert sd[first + 24:first + 280].rstrip(b"\0").decode() == wanted[0].location
+    # A sync with nothing new keeps the order.
+    assert backend.sync(library.root).ok
+    assert _titles(backend.browse()) == ["Second: Song?", "Other Single", "First Song"]
+
+
+def test_rockbox_delete_and_reorder(library, tmp_path):
+    mount = tmp_path / "rockbox"
+    (mount / ".rockbox").mkdir(parents=True)
+    rb = identify(mount).backend()
+    rb.sync(library.root)
+    contents = rb.browse()
+    [pl] = contents.playlists
+    rb.reorder(pl.id, [contents.tracks[i].location for i in reversed(pl.track_indices)])
+    contents = rb.browse()
+    assert contents.playlists[0].name == "Road Trip"
+    assert _titles(contents, contents.playlists[0].track_indices) == ["First Song", "Other Single"]
+
+    gone = next(t for t in contents.tracks if t.title == "Other Single")
+    assert rb.delete_tracks({gone.location}) == 1
+    contents = rb.browse()
+    assert "Other Single" not in _titles(contents)
+    assert _titles(contents, contents.playlists[0].track_indices) == ["First Song"]
+    assert not (mount / "Music" / "Solo Act").exists()

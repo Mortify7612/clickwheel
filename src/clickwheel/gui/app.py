@@ -90,6 +90,9 @@ class MainWindow(QMainWindow):
         self.library_page = LibraryPage(self.library, self.manager)
         self.device_page = DevicePage(self.library, self.settings)
         self.manager.library_changed.connect(self.device_page.refresh_choices)
+        # Edits on the iPod tab can also change the library (mirrored order, deletions).
+        self.device_page.browser.library_edited.connect(self.library_page.refresh)
+        self.device_page.browser.library_edited.connect(self.device_page.refresh_choices)
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)

@@ -151,6 +151,24 @@ def find_fpcalc() -> str:
     )
 
 
+def _loc(track) -> str:
+    return (track.location or "").replace(":", "/")
+
+
+def _playlist_key(playlist) -> str:
+    return str(playlist.playlist_id) if playlist.playlist_id else f"name:{playlist.name}"
+
+
+def _in_master_order(lib) -> list:
+    """Tracks in master-playlist order (the Shuffle's play order), others after."""
+    tracks = lib.tracks
+    master = lib.master_playlist
+    if master is None:
+        return tracks
+    position = {db_id: n for n, db_id in enumerate(master.track_ids)}
+    return sorted(tracks, key=lambda t: position.get(t.db_track_id, len(position)))
+
+
 def _plan_counts(plan) -> dict[str, int]:
     return {f.name: len(getattr(plan, f.name)) for f in dataclasses.fields(plan)
             if isinstance(getattr(plan, f.name), list)}
@@ -239,7 +257,7 @@ class AppleSync:
     def write_itunessd(self) -> Path:
         lib = self.ipod.library(reload=True)
         tracks, index_by_dbid = [], {}
-        for t in lib.tracks:
+        for t in _in_master_order(lib):
             location = (t.location or "").replace(":", "/")
             if not location:
                 continue
@@ -265,7 +283,7 @@ class AppleSync:
         lib = self.ipod.library(reload=True)
         art = self._artwork_refs()
         tracks, index_by_dbid = [], {}
-        for t in lib.tracks:
+        for t in _in_master_order(lib):
             index_by_dbid[t.db_track_id] = len(tracks)
             tracks.append(DeviceTrack(
                 title=t.title, artist=t.artist, album=t.album, track_number=t.track_number,
@@ -274,10 +292,52 @@ class AppleSync:
                 artwork=art.get(t.db_track_id),
             ))
         playlists = [
-            DevicePlaylist(p.name, [index_by_dbid[i] for i in p.track_ids if i in index_by_dbid])
+            DevicePlaylist(p.name, [index_by_dbid[i] for i in p.track_ids if i in index_by_dbid], _playlist_key(p))
             for p in lib.playlists if not p.master
         ]
-        return DeviceContents(tracks, playlists)
+        return DeviceContents(tracks, playlists, ordered_library=bool(getattr(self.ipod.capabilities, "is_shuffle", False)))
+
+    # ── Editing what's on the device ─────────────────────────────────────
+
+    def _commit(self) -> None:
+        if not self.ipod.save(raise_on_error=False):
+            raise RuntimeError("Writing the iPod database failed; nothing was changed.")
+        if getattr(self.ipod.capabilities, "is_shuffle", False):
+            self.write_itunessd()
+
+    def delete_tracks(self, locations: set[str]) -> int:
+        """Remove songs (by device location) from the database, then their files."""
+        lib = self.ipod.library(reload=True)
+        doomed = [t for t in lib.tracks if _loc(t) in locations]
+        if not doomed:
+            return 0
+        for t in doomed:
+            lib.remove_track(t)
+        self._commit()  # database first: a failed write must not leave entries pointing at deleted files
+        root = Path(self.ipod.path)
+        for t in doomed:
+            (root / _loc(t).lstrip("/")).unlink(missing_ok=True)
+        return len(doomed)
+
+    def reorder(self, playlist_id: str | None, locations: list[str]) -> None:
+        """Set a playlist's order, or with ``None`` the master list (Shuffle play order)."""
+        lib = self.ipod.library(reload=True)
+        id_by_loc = {_loc(t): t.db_track_id for t in lib.tracks}
+        ids = [id_by_loc[loc] for loc in locations if loc in id_by_loc]
+        if playlist_id is None:
+            master = lib.master_playlist
+            rest = [i for i in (master.track_ids if master else []) if i not in set(ids)]
+            order = {db_id: n for n, db_id in enumerate(ids + rest)}
+            # Track rows and master playlist both carry the order; keep them in step.
+            lib._tracks_data.sort(key=lambda d: order.get(int(d.get("db_track_id") or d.get("db_id") or 0), len(order)))
+            if master is not None:
+                master.track_ids = ids + rest
+        else:
+            playlist = next((p for p in lib.playlists if _playlist_key(p) == playlist_id), None)
+            if playlist is None:
+                raise RuntimeError("That playlist is no longer on the iPod.")
+            playlist.track_ids = ids
+        self._commit()
 
     def _artwork_refs(self) -> dict[int, ArtworkRef]:
         """Largest cover per track, keyed by db_track_id (ArtworkDB ``songId``)."""

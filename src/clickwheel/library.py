@@ -179,6 +179,22 @@ class Library:
                 "WHERE i.playlist_id = ? ORDER BY i.position", (pid,)).fetchall()
         return [LibraryTrack(*r) for r in rows]
 
+    def reorder_playlist(self, pid: str, ordered_ids: list[str]) -> None:
+        """Put ``ordered_ids`` first, in that order; other songs keep their relative order after."""
+        playlist = next((p for p in self.playlists() if p.id == pid), None)
+        if playlist is None:
+            return
+        current = [t.video_id for t in self.playlist_tracks(pid)]
+        wanted = [v for v in dict.fromkeys(ordered_ids) if v in set(current)]
+        rest = [v for v in current if v not in set(wanted)]
+        self.save_playlist(pid, playlist.title, playlist.kind, playlist.url, wanted + rest, playlist.profile)
+
+    def find_track(self, title: str, artist: str, album: str) -> LibraryTrack | None:
+        """Match a song seen on a device back to the library by its tags."""
+        key = (title.casefold(), artist.casefold(), album.casefold())
+        return next((t for t in self.tracks() if (t.title.casefold(), t.artist.casefold(), t.album.casefold()) == key),
+                    None)
+
     def delete_playlist(self, pid: str) -> None:
         playlist = next((p for p in self.playlists() if p.id == pid), None)
         with self._lock, self._db:
