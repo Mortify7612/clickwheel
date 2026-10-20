@@ -20,6 +20,16 @@ binaries = [
     for root, _dirs, files in os.walk(_wasmtime_dir)
     for f in files if f.endswith((".so", ".dylib", ".dll"))
 ] + [(deno.find_deno_bin(), ".")]
+
+# Chromaprint's fpcalc (song matching during sync). Prefer pyPodLib's static
+# download, which CI fetches before building; a distro build would drag in
+# system libraries that may not exist on the user's machine.
+from pypodlib.sync.dependency_manager import get_bundled_fpcalc  # noqa: E402
+
+_fpcalc = get_bundled_fpcalc()
+if not _fpcalc:
+    raise SystemExit("fpcalc missing: run `uv run python -m clickwheel.tools fetch-fpcalc` first")
+binaries.append((_fpcalc, "."))
 # pyPodLib imports most of its modules lazily inside functions.
 hiddenimports = collect_submodules("pypodlib") + collect_submodules("ytmusicapi") + collect_submodules("yt_dlp_ejs")
 

@@ -8,6 +8,8 @@ an iTunesSD written on top, which pyPodLib does not produce.
 from __future__ import annotations
 
 import dataclasses
+import shutil
+import sys
 import zlib
 from collections.abc import Callable
 from pathlib import Path
@@ -127,6 +129,28 @@ def _describe_progress(ev) -> str:
     return f"{label} · {detail}" if detail else label
 
 
+def find_fpcalc() -> str:
+    """Locate Chromaprint's ``fpcalc``, which pyPodLib needs to match songs.
+
+    Order: shipped inside the app, already installed, pyPodLib's earlier
+    download, then a one-time download of the static build for this platform.
+    """
+    exe = "fpcalc.exe" if sys.platform == "win32" else "fpcalc"
+    bundle = getattr(sys, "_MEIPASS", None)
+    if bundle and (Path(bundle) / exe).is_file():
+        return str(Path(bundle) / exe)
+    if found := shutil.which("fpcalc"):
+        return found
+    from pypodlib.sync.dependency_manager import download_fpcalc, get_bundled_fpcalc
+
+    if found := get_bundled_fpcalc() or download_fpcalc():
+        return found
+    raise RuntimeError(
+        "Clickwheel needs Chromaprint's fpcalc to match songs on the iPod and couldn't download it. "
+        "Check your internet connection, or install Chromaprint (https://acoustid.org/chromaprint)."
+    )
+
+
 def _plan_counts(plan) -> dict[str, int]:
     return {f.name: len(getattr(plan, f.name)) for f in dataclasses.fields(plan)
             if isinstance(getattr(plan, f.name), list)}
@@ -163,6 +187,7 @@ class AppleSync:
             supports_video=bool(getattr(caps, "supports_video", False)),
             supports_podcast=False,
             supports_photo=False,
+            fpcalc_path=find_fpcalc(),
             allowed_paths=frozenset(str(p) for p in allowed) if allowed is not None else None,
             selected_playlist_paths=frozenset(str(p) for p in playlists) if playlists is not None else None,
         )
