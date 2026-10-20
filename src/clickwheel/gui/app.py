@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import sys
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QSpinBox, QTabWidget, QWidget,
 )
 
+from .._version import __version__
 from ..config import APP_NAME, DB_FILE, Settings
 from ..library import Library
 from .device_page import DevicePage
 from .library_page import LibraryPage
+from .update_dialog import check_for_updates
 from .workers import DownloadManager
 from .ytm_page import YtmPage
 
@@ -41,6 +44,9 @@ class SettingsDialog(QDialog):
         self.rockbox_files = QCheckBox("Sync Rockbox iPods as plain files (instead of the Apple database)")
         self.rockbox_files.setChecked(settings.rockbox_prefers_files)
         form.addRow(self.rockbox_files)
+        self.auto_update = QCheckBox("Check for Clickwheel updates once a day")
+        self.auto_update.setChecked(settings.check_for_updates)
+        form.addRow(self.auto_update)
         self.parallel = QSpinBox(minimum=1, maximum=6, value=settings.parallel_downloads)
         form.addRow("Simultaneous downloads", self.parallel)
         self.cover = QSpinBox(minimum=300, maximum=2000, singleStep=100, value=settings.cover_size)
@@ -62,6 +68,7 @@ class SettingsDialog(QDialog):
         self.settings.library_dir = self.folder.text()
         self.settings.prefer_album_versions = self.album_versions.isChecked()
         self.settings.rockbox_prefers_files = self.rockbox_files.isChecked()
+        self.settings.check_for_updates = self.auto_update.isChecked()
         self.settings.parallel_downloads = self.parallel.value()
         self.settings.cover_size = self.cover.value()
         self.settings.save()
@@ -100,7 +107,17 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         menu.addAction(quit_action)
 
+        help_menu = self.menuBar().addMenu("&Help")
+        updates = QAction("Check for updates…", self)
+        updates.triggered.connect(lambda: check_for_updates(self, self.settings, manual=True))
+        help_menu.addAction(updates)
+        about = QAction("About Clickwheel", self)
+        about.triggered.connect(lambda: QMessageBox.about(
+            self, "About Clickwheel", f"<b>Clickwheel {__version__}</b><br>YouTube Music to iPod."))
+        help_menu.addAction(about)
+
         status.showMessage(f"Library: {self.library.root}")
+        QTimer.singleShot(3000, lambda: check_for_updates(self, self.settings, manual=False))
 
     def _settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)

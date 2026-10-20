@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import sys
 
 import pytest
 
@@ -35,7 +36,8 @@ def test_multiple_accounts_and_switching(store):
     assert auth.active_profile().id == alex.id
     assert auth.cookies_file(sam) != auth.cookies_file(alex)
     assert "__Secure-3PAPISID\txyz" in (sam.dir / "cookies.txt").read_text()
-    assert (sam.dir / "cookies.txt").stat().st_mode & 0o077 == 0  # private to the user
+    if sys.platform != "win32":  # Windows relies on the user-profile ACLs instead
+        assert (sam.dir / "cookies.txt").stat().st_mode & 0o077 == 0  # private to the user
 
 
 def test_signing_in_again_refreshes_instead_of_duplicating(store):

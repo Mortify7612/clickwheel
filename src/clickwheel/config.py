@@ -30,6 +30,8 @@ class Settings:
     cover_size: int = 1000
     # Rockbox devices: mirror files instead of writing the Apple database.
     rockbox_prefers_files: bool = True
+    check_for_updates: bool = True
+    last_update_check: float = 0.0
 
     @classmethod
     def load(cls) -> Settings:

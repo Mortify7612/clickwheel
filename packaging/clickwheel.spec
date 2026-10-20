@@ -33,6 +33,10 @@ binaries.append((_fpcalc, "."))
 # pyPodLib imports most of its modules lazily inside functions.
 hiddenimports = collect_submodules("pypodlib") + collect_submodules("ytmusicapi") + collect_submodules("yt_dlp_ejs")
 
+_version = {}
+exec(open(os.path.join(SPECPATH, "..", "src", "clickwheel", "_version.py")).read(), _version)
+_version = _version["__version__"]
+
 a = Analysis(
     [os.path.join(SPECPATH, "launcher.py")],
     pathex=[os.path.join(SPECPATH, "..", "src")],
@@ -59,7 +63,7 @@ if sys.platform == "darwin":
         name="Clickwheel.app",
         bundle_identifier="io.github.captainslow48.clickwheel",
         info_plist={
-            "CFBundleShortVersionString": "0.1.0",
+            "CFBundleShortVersionString": _version,
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "12.0",
         },

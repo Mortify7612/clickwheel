@@ -27,9 +27,26 @@ yt-dlp's JavaScript runtime comes from the bundled `deno` wheel, so nothing else
 ## Installers
 
 GitHub Actions builds macOS (Apple Silicon + Intel `.dmg`), Windows (`.zip`) and Linux (`.tar.gz`)
-packages. Builds run when you start the **Build** workflow from the Actions tab (artifacts appear on
-the run page) or when you push a tag like `v0.2.0`, which also creates a GitHub Release.
-Tests alone run on every push.
+packages. Starting the **Build** workflow from the Actions tab produces test builds (artifacts on the
+run page). Tests alone run on every push.
+
+### Releasing and in-app updates
+
+This repo is private, so releases are published to the public
+[clickwheel-releases](https://github.com/Mortify7612/clickwheel-releases) repo, which holds only
+installers and `SHA256SUMS.txt`. Clickwheel checks it once a day (and via Help ▸ Check for updates),
+downloads the build for your platform, verifies its checksum, swaps itself out and restarts.
+
+To publish a version:
+
+```sh
+# CI stamps the version from the tag; no file to bump
+git tag -a v0.2.0 -m "What's new in this version (shown in the update dialog)"
+git push origin v0.2.0
+```
+
+One-time setup: create a fine-grained token with **Contents: read and write** on
+`clickwheel-releases` only, and save it as the Actions secret `RELEASES_TOKEN` in this repo.
 
 To build locally for the current OS: `uv run pyinstaller packaging/clickwheel.spec` → `dist/`.
 

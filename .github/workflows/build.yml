@@ -46,6 +46,11 @@ jobs:
       # Tests that need ffmpeg skip themselves where it isn't installed.
       - run: uv run pytest -q
 
+      - name: Stamp version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: printf '__version__ = "%s"\n' "${GITHUB_REF_NAME#v}" > src/clickwheel/_version.py
+
       - run: uv run pyinstaller --noconfirm --distpath dist --workpath build packaging/clickwheel.spec
 
       - name: Smoke-test the frozen app
@@ -75,16 +80,41 @@ jobs:
           path: Clickwheel-${{ matrix.name }}.*
           if-no-files-found: error
 
+  # Installers go to the public releases repo (the source repo is private) so the
+  # app's built-in updater can download them without a GitHub login.
+  # Requires secret RELEASES_TOKEN: fine-grained token with Contents read/write
+  # on Mortify7612/clickwheel-releases only.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
+      - name: Check token
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          [ -n "$RELEASES_TOKEN" ] || { echo "::error::Add the RELEASES_TOKEN secret (see workflow comment)"; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Release notes from the tag message
+        run: |
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
+          [ -s notes.md ] || echo "Clickwheel $GITHUB_REF_NAME" > notes.md
       - uses: actions/download-artifact@v4
         with:
+          path: assets
           merge-multiple: true
+      - name: Checksums
+        working-directory: assets
+        run: sha256sum Clickwheel-* > SHA256SUMS.txt && cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
-          files: Clickwheel-*
+          repository: Mortify7612/clickwheel-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Clickwheel ${{ github.ref_name }}
+          body_path: notes.md
+          files: |
+            assets/Clickwheel-*
+            assets/SHA256SUMS.txt
