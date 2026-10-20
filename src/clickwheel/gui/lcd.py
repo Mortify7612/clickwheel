@@ -1,4 +1,4 @@
-"""Retro dot-matrix LCD strip: app title, scrolling status ticker, level meter.
+"""Retro dot-matrix LCD strip: the artist up top, a scrolling ticker below, level meter.
 
 Everything is drawn into a low-resolution "virtual LCD" (one pixel per dot)
 with antialiasing off, then blown up so each pixel becomes a square dot with a
@@ -13,21 +13,19 @@ import math
 import random
 import time
 
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, QTimer
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPixmap,
+    QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+    QPolygonF, QRadialGradient,
 )
 from PySide6.QtWidgets import QWidget
 
+from .theme import LcdSkin, lcd_skin
+
 PITCH = 3        # screen pixels per dot (dot + gap)
 DOT = 2          # lit square size within a pitch cell
-LIT = QColor("#39ff7a")
-AMBER = QColor("#ffc233")
-RED = QColor("#ff5533")
-UNLIT = QColor(16, 48, 26)
-SCREEN_BG = QColor("#020805")
 BARS = 16
-TITLE = "CLICKWHEEL"
+GAP = 24  # dots between repeats of a scrolling line
 
 
 def _dot_font(pixel_size: int, bold: bool = False) -> QFont:
@@ -52,10 +50,76 @@ def _tile(color: QColor) -> QPixmap:
     return tile
 
 
-class LcdDisplay(QWidget):
-    """Dot-matrix panel with a marquee and a bouncing level meter while busy."""
+def _blend(stops: tuple, t: float) -> QColor:
+    """The colour ``t`` (0..1) of the way through evenly spaced ``stops``."""
+    pos = min(max(t, 0.0), 1.0) * (len(stops) - 1)
+    i = min(int(pos), len(stops) - 2)
+    a, b, f = QColor(stops[i]), QColor(stops[i + 1]), pos - i
+    return QColor(round(a.red() + (b.red() - a.red()) * f), round(a.green() + (b.green() - a.green()) * f),
+                  round(a.blue() + (b.blue() - a.blue()) * f))
 
-    TITLE_FONT = 11   # in dots
+
+# A lightning bolt in a unit box, like the one in Winamp's logo.
+BOLT = ((0.56, 0.0), (0.16, 0.58), (0.44, 0.58), (0.30, 1.0), (0.84, 0.36), (0.55, 0.36), (0.74, 0.0))
+
+
+def _paint_lightning(p: QPainter, rect: QRectF) -> None:
+    """A faint gold bolt behind the dots, glowing softly, dim enough to read text over."""
+    h = rect.height() * 1.45
+    w = h * 0.72
+    x0, y0 = rect.left() + rect.width() * 0.6 - w / 2, rect.center().y() - h / 2
+    bolt = QPainterPath()
+    bolt.addPolygon(QPolygonF([QPointF(x0 + x * w, y0 + y * h) for x, y in BOLT]))
+    bolt.closeSubpath()
+    p.save()
+    p.setClipRect(rect)
+    for width, alpha in ((14, 10), (8, 18), (4, 30)):  # soft glow, widest and faintest first
+        p.strokePath(bolt, QPen(QColor(255, 196, 40, alpha), width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    fill = QLinearGradient(QPointF(x0, y0), QPointF(x0 + w, y0 + h))
+    fill.setColorAt(0, QColor(255, 226, 90, 70))
+    fill.setColorAt(1, QColor(232, 120, 24, 60))
+    p.fillPath(bolt, fill)
+    p.restore()
+
+
+def _paint_bliss(p: QPainter, rect: QRectF) -> None:
+    """A rolling green hill under a blue sky with soft clouds."""
+    sky = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+    sky.setColorAt(0, QColor("#1f5fcf"))
+    sky.setColorAt(0.7, QColor("#5aa2ee"))
+    sky.setColorAt(1, QColor("#8cc2f4"))
+    p.fillRect(rect, sky)
+    w, h, x, y = rect.width(), rect.height(), rect.left(), rect.top()
+    for cx, cy, rx, ry in ((0.18, 0.22, 0.10, 0.20), (0.27, 0.30, 0.08, 0.16),
+                           (0.62, 0.18, 0.12, 0.18), (0.74, 0.26, 0.07, 0.14)):
+        centre = QPointF(x + cx * w, y + cy * h)
+        cloud = QRadialGradient(centre, rx * w)
+        cloud.setColorAt(0, QColor(255, 255, 255, 120))
+        cloud.setColorAt(1, QColor(255, 255, 255, 0))
+        p.save()
+        p.translate(centre)
+        p.scale(1, ry * h / (rx * w))  # squash the round puff into a wide one
+        p.translate(-centre)
+        p.fillRect(QRectF(centre.x() - rx * w, centre.y() - rx * w, 2 * rx * w, 2 * rx * w), cloud)
+        p.restore()
+    hill = QPainterPath(QPointF(x, y + h * 0.62))
+    hill.cubicTo(QPointF(x + w * 0.22, y + h * 0.30), QPointF(x + w * 0.45, y + h * 0.38),
+                 QPointF(x + w * 0.62, y + h * 0.55))
+    hill.cubicTo(QPointF(x + w * 0.78, y + h * 0.70), QPointF(x + w * 0.90, y + h * 0.52), QPointF(x + w, y + h * 0.56))
+    hill.lineTo(rect.bottomRight())
+    hill.lineTo(rect.bottomLeft())
+    hill.closeSubpath()
+    grass = QLinearGradient(QPointF(x, y + h * 0.35), rect.bottomLeft())
+    grass.setColorAt(0, QColor("#64b52c"))
+    grass.setColorAt(1, QColor("#2b7413"))
+    p.fillPath(hill, grass)
+
+
+class LcdDisplay(QWidget):
+    """Dot-matrix panel: the playing artist as the feature line, the song (or status) scrolling
+    underneath, and a level meter. With nothing playing, the status takes the feature line."""
+
+    FEATURE_FONT = 11   # in dots
     TICKER_FONT = 10
 
     def __init__(self, parent=None):
@@ -63,20 +127,24 @@ class LcdDisplay(QWidget):
         self.setFixedHeight(84)
         self._status = ""            # latest status message (downloads, sync, ...)
         self._status_until = 0.0     # show it until then, unless something is busy
-        self._now_playing = ""
+        self._artist = ""
+        self._song = ""
         self._play_state = "stopped"
         self._clock = ""             # "1:23 / 3:45"
         self._spectrum: list[float] | None = None  # live levels while music plays
-        self._message = "READY"      # what the ticker currently shows
-        self._offset = 0      # marquee scroll, in whole dots
+        # What each line currently shows, and its marquee scroll in whole dots.
+        self._feature, self._feature_offset = "READY", 0
+        self._message, self._offset = "", 0
         self._busy: set[str] = set()  # e.g. {"downloads", "sync"}
         self._levels = [0.05] * BARS
         self._peaks = [0.05] * BARS
         self._phase = 0.0
         self._blink = 0
-        self._title_font = _dot_font(self.TITLE_FONT, bold=True)
+        self._feature_font = _dot_font(self.FEATURE_FONT, bold=True)
         self._ticker_font = _dot_font(self.TICKER_FONT)
-        self._unlit_brush = QBrush(_tile(UNLIT))
+        self._small_font = _dot_font(8, bold=True)
+        self._skin: LcdSkin | None = None
+        self._unlit_brush = QBrush()
         self._mask_brush = QBrush(_tile(QColor("white")))
         self._timer = QTimer(self, interval=60, timeout=self._tick)
         self._timer.start()
@@ -88,11 +156,12 @@ class LcdDisplay(QWidget):
         self._status = " ".join((text or "").split()).upper()
         self._status_until = time.monotonic() + 6
 
-    def set_now_playing(self, label: str, state: str) -> None:
-        label = " ".join((label or "").split()).upper()
-        if state == "playing" and label != self._now_playing:
+    def set_now_playing(self, artist: str, title: str, state: str) -> None:
+        artist = " ".join((artist or "").split()).upper()
+        title = " ".join((title or "").split()).upper()
+        if state == "playing" and (artist, title) != (self._artist, self._song):
             self._status_until = 0.0  # a new song takes over the ticker straight away
-        self._now_playing = label
+        self._artist, self._song = artist, title
         self._play_state = state
         if state != "playing":
             self._spectrum = None
@@ -107,12 +176,14 @@ class LcdDisplay(QWidget):
     def set_spectrum(self, levels: list[float]) -> None:
         self._spectrum = list(levels) if self._play_state == "playing" and any(levels) else None
 
-    def _ticker_text(self) -> str:
+    def _lines(self) -> tuple[str, str]:
+        """(feature line, ticker line)."""
+        if not (self._artist or self._song):
+            return self._status or "READY", ""
+        song = self._song if self._artist else ""  # no artist tag: the title is the feature
         if self._status and (self._busy or time.monotonic() < self._status_until):
-            return self._status
-        if self._now_playing:
-            return self._now_playing
-        return self._status or "READY"
+            return self._artist or self._song, self._status
+        return self._artist or self._song, song
 
     def set_busy(self, source: str, busy: bool) -> None:
         if busy:
@@ -140,12 +211,28 @@ class LcdDisplay(QWidget):
         cols, _rows = self._grid()
         return cols - self._meter_cols() - 8
 
+    def _clock_text(self) -> str:
+        if self._play_state == "stopped" and not self._clock:
+            return ""
+        icon = {"playing": "▶", "paused": "❚❚"}.get(self._play_state, "■")
+        return f"{icon} {self._clock}"
+
+    def _feature_cols(self) -> int:
+        """Room for the feature line: left of the busy lamp and clock."""
+        metrics = QFontMetrics(self._small_font)
+        right = metrics.horizontalAdvance(self._clock_text())
+        if self._active:
+            right += metrics.horizontalAdvance("◆ BUSY") + 8
+        return self._ticker_cols() - right - (8 if right else 0)
+
     # ── Animation ────────────────────────────────────────────────────────
 
     def _tick(self) -> None:
         self._phase += 0.25
         self._blink = (self._blink + 1) % 16
-        message = self._ticker_text()
+        feature, message = self._lines()
+        if feature != self._feature:
+            self._feature, self._feature_offset = feature, 0
         if message != self._message:
             self._message, self._offset = message, 0
         spectrum = self._spectrum
@@ -165,15 +252,19 @@ class LcdDisplay(QWidget):
                 target = 0.0
             self._levels[i] += (target - self._levels[i]) * (0.5 if self._active else 0.2)
             self._peaks[i] = max(self._levels[i], self._peaks[i] - 0.03)
+        width = QFontMetrics(self._feature_font).horizontalAdvance(self._feature)
+        if width > self._feature_cols():
+            self._feature_offset = (self._feature_offset + 1) % (width + GAP)
         width = QFontMetrics(self._ticker_font).horizontalAdvance(self._message)
         if width > self._ticker_cols():
-            self._offset = (self._offset + 1) % (width + 24)
+            self._offset = (self._offset + 1) % (width + GAP)
         self.update()
 
     # ── Painting ─────────────────────────────────────────────────────────
 
-    def _render_dots(self, cols: int, rows: int) -> QImage:
+    def _render_dots(self, cols: int, rows: int, skin: LcdSkin) -> QImage:
         """Draw the display content at one pixel per dot."""
+        lit, mid, peak_color = QColor(skin.lit), QColor(skin.mid), QColor(skin.peak)
         img = QImage(cols, rows, QImage.Format_ARGB32_Premultiplied)
         img.fill(Qt.transparent)
         p = QPainter(img)
@@ -181,72 +272,87 @@ class LcdDisplay(QWidget):
         p.setRenderHint(QPainter.TextAntialiasing, False)
 
         top_h = rows // 2
-        p.setFont(self._title_font)
-        p.setPen(LIT)
-        p.drawText(QRect(2, 0, cols, top_h), Qt.AlignLeft | Qt.AlignVCenter, TITLE)
-        title_w = QFontMetrics(self._title_font).horizontalAdvance(TITLE)
-        small = _dot_font(8, bold=True)
-        p.setFont(small)
+        p.setPen(lit)
+        # Feature line (the artist), then the busy lamp and clock at its right.
+        self._marquee(p, QRect(2, 0, self._feature_cols(), top_h), self._feature_font,
+                      self._feature, self._feature_offset)
+        p.setFont(self._small_font)
+        clock = self._clock_text()
+        clock_w = QFontMetrics(self._small_font).horizontalAdvance(clock)
         if self._active and self._blink < 11:  # blinking busy lamp
-            p.setPen(AMBER)
-            p.drawText(QRect(title_w + 8, 0, 60, top_h), Qt.AlignLeft | Qt.AlignVCenter, "◆ BUSY")
-        if self._play_state != "stopped" or self._clock:
-            icon = {"playing": "▶", "paused": "❚❚"}.get(self._play_state, "■")
-            # Paused: blink the clock, like a hardware deck.
-            if self._play_state != "paused" or self._blink < 10:
-                p.setPen(LIT)
-                p.drawText(QRect(0, 0, self._ticker_cols(), top_h), Qt.AlignRight | Qt.AlignVCenter,
-                           f"{icon} {self._clock}")
+            p.setPen(mid)
+            p.drawText(QRect(0, 0, self._ticker_cols() - clock_w - (8 if clock else 0), top_h),
+                       Qt.AlignRight | Qt.AlignVCenter, "◆ BUSY")
+        # Paused: blink the clock, like a hardware deck.
+        if clock and (self._play_state != "paused" or self._blink < 10):
+            p.setPen(lit)
+            p.drawText(QRect(0, 0, self._ticker_cols(), top_h), Qt.AlignRight | Qt.AlignVCenter, clock)
 
-        # Marquee on the bottom line, clipped to the area left of the meter.
-        ticker = QRect(2, top_h, self._ticker_cols(), rows - top_h)
-        p.save()
-        p.setClipRect(ticker)
-        p.setFont(self._ticker_font)
-        p.setPen(LIT)
-        width = QFontMetrics(self._ticker_font).horizontalAdvance(self._message)
-        if width > ticker.width():
-            gap = 24
-            for start in (ticker.left() - self._offset, ticker.left() - self._offset + width + gap):
-                p.drawText(QRect(start, ticker.top(), width + gap, ticker.height()),
-                           Qt.AlignLeft | Qt.AlignVCenter, self._message)
-        else:
-            p.drawText(ticker, Qt.AlignLeft | Qt.AlignVCenter, self._message)
-        p.restore()
+        # Ticker on the bottom line (the song, or a status message), left of the meter.
+        p.setPen(lit)
+        self._marquee(p, QRect(2, top_h, self._ticker_cols(), rows - top_h), self._ticker_font,
+                      self._message, self._offset)
 
-        # Level meter: each row of dots is one segment; green -> amber -> red.
+        # Level meter: each row of dots is one segment, coloured by height.
         left = cols - self._meter_cols() - 1
         meter_rows = rows - 2
+        segment = [_blend(skin.meter, r / max(1, meter_rows - 1)) for r in range(meter_rows)]
         for i, level in enumerate(self._levels):
             x = left + i * 3
-            lit = max(1, int(round(level * meter_rows)))  # idle: a one-dot resting baseline
-            for r in range(lit):
-                frac = r / max(1, meter_rows - 1)
-                color = RED if frac > 0.82 else AMBER if frac > 0.62 else LIT
-                p.fillRect(x, rows - 2 - r, 2, 1, color)
+            height = max(1, int(round(level * meter_rows)))  # idle: a one-dot resting baseline
+            for r in range(min(height, meter_rows)):
+                p.fillRect(x, rows - 2 - r, 2, 1, segment[r])
             if self._active or self._spectrum is not None:
                 peak = min(meter_rows - 1, int(self._peaks[i] * meter_rows))
-                p.fillRect(x, rows - 2 - peak, 2, 1, QColor("#d9ffe6"))
+                p.fillRect(x, rows - 2 - peak, 2, 1, peak_color)
         p.end()
         return img
 
+    @staticmethod
+    def _marquee(p: QPainter, rect: QRect, font: QFont, text: str, offset: int) -> None:
+        """``text`` in ``rect``, scrolling round when it doesn't fit."""
+        if not text or rect.width() <= 0:
+            return
+        p.save()
+        p.setClipRect(rect)
+        p.setFont(font)
+        width = QFontMetrics(font).horizontalAdvance(text)
+        if width > rect.width():
+            for start in (rect.left() - offset, rect.left() - offset + width + GAP):
+                p.drawText(QRect(start, rect.top(), width + GAP, rect.height()), Qt.AlignLeft | Qt.AlignVCenter, text)
+        else:
+            p.drawText(rect, Qt.AlignLeft | Qt.AlignVCenter, text)
+        p.restore()
+
     def paintEvent(self, _event) -> None:
+        skin = lcd_skin()
+        if skin != self._skin:
+            self._skin = skin
+            self._unlit_brush = QBrush(_tile(QColor(*skin.unlit)))
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         outer_r = QRectF(self.rect()).adjusted(2, 1, -2, -1)
 
         # Bevelled plastic bezel.
         bezel = QLinearGradient(outer_r.topLeft(), outer_r.bottomLeft())
-        bezel.setColorAt(0, QColor("#62626f"))
-        bezel.setColorAt(0.5, QColor("#3a3a44"))
-        bezel.setColorAt(1, QColor("#18181d"))
+        for stop, color in zip((0, 0.5, 1), skin.bezel):
+            bezel.setColorAt(stop, QColor(color))
         outer = QPainterPath()
         outer.addRoundedRect(outer_r, 7, 7)
         p.fillPath(outer, bezel)
         screen = self._screen()
         glass = QPainterPath()
         glass.addRoundedRect(QRectF(screen).adjusted(-2, -2, 2, 2), 4, 4)
-        p.fillPath(glass, SCREEN_BG)
+        screen_bg = QLinearGradient(QRectF(screen).topLeft(), QRectF(screen).bottomLeft())
+        screen_bg.setColorAt(0, QColor(skin.screen[0]))
+        screen_bg.setColorAt(1, QColor(skin.screen[1]))
+        p.fillPath(glass, screen_bg)
+        scene = {"bliss": _paint_bliss, "lightning": _paint_lightning}.get(skin.scene)
+        if scene is not None:
+            p.save()
+            p.setClipPath(glass)
+            scene(p, glass.boundingRect())
+            p.restore()
 
         cols, rows = self._grid()
         origin = screen.topLeft()
@@ -257,7 +363,7 @@ class LcdDisplay(QWidget):
         p.setBrushOrigin(origin)
         p.fillRect(size_px, self._unlit_brush)
 
-        content = self._render_dots(cols, rows)
+        content = self._render_dots(cols, rows, skin)
         # Glow: the content smoothly upscaled behind the dots.
         glow = content.scaled(cols * PITCH, rows * PITCH, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         p.setOpacity(0.28)

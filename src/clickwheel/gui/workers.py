@@ -3,6 +3,7 @@ delivered on the GUI thread by Qt's queued connections."""
 
 from __future__ import annotations
 
+import itertools
 import queue
 import threading
 import traceback
@@ -13,7 +14,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from .. import auth
 from ..config import Settings
 from ..library import Library
-from ..pipeline import Pipeline, TrackEvent
+from ..pipeline import Pipeline
 from ..ytm import Collection, Resolver
 
 
@@ -63,13 +64,18 @@ def run(fn: Callable, *args, on_done=None, on_error=None, **kwargs) -> Task:
 
 
 class DownloadManager(QObject):
-    """Serial queue of links/playlists to resolve and download."""
+    """Serial queue of links/playlists to resolve and download.
 
+    Every queued item is a job with an id, so views can follow each one from
+    "waiting" through to its finished counts.
+    """
+
+    queued = Signal(int, str)              # job, label
     resolving = Signal(str)
-    started = Signal(object)          # Collection
-    track_event = Signal(object)      # TrackEvent
-    finished = Signal(object, object)  # Collection, counts
-    error = Signal(str, str)          # what, message
+    started = Signal(int, object)          # job, Collection
+    track_event = Signal(int, object)      # job, TrackEvent
+    finished = Signal(int, object, object)  # job, Collection, counts
+    error = Signal(int, str, str)          # job, what, message
     library_changed = Signal()
     idle = Signal()
 
@@ -77,17 +83,34 @@ class DownloadManager(QObject):
         super().__init__()
         self.library = library
         self.settings = settings
-        self._queue: queue.Queue[tuple[str, str, str, str | None]] = queue.Queue()
+        self._queue: queue.Queue[tuple[int, str, object, str, str | None]] = queue.Queue()
+        self._ids = itertools.count(1)
         self._pipeline: Pipeline | None = None
         self._cancel_all = threading.Event()
         threading.Thread(target=self._loop, daemon=True).start()
 
-    # ``profile_id`` None means "whichever profile is active right now".
-    def enqueue_url(self, url: str, profile_id: str | None = None) -> None:
-        self._queue.put(("url", url, url, profile_id or self._active_id()))
+    def new_job(self) -> int:
+        """Reserve a job id, for callers that want to track a job before it's queued."""
+        return next(self._ids)
 
-    def enqueue_playlist(self, playlist_id: str, title: str, profile_id: str | None = None) -> None:
-        self._queue.put(("playlist", playlist_id, title, profile_id or self._active_id()))
+    # ``profile_id`` None means "whichever profile is active right now".
+    def enqueue_url(self, url: str, profile_id: str | None = None, job: int | None = None) -> int:
+        return self._put("url", url, url, profile_id, job)
+
+    def enqueue_playlist(self, playlist_id: str, title: str, profile_id: str | None = None,
+                         job: int | None = None) -> int:
+        return self._put("playlist", playlist_id, title, profile_id, job)
+
+    def enqueue_collection(self, collection: Collection, profile_id: str | None = None,
+                           job: int | None = None) -> int:
+        """Queue an already-resolved collection (e.g. a previewed playlist)."""
+        return self._put("collection", collection, collection.title, profile_id, job)
+
+    def _put(self, kind: str, ident, label: str, profile_id: str | None, job: int | None) -> int:
+        job = job or self.new_job()
+        self._queue.put((job, kind, ident, label, profile_id or self._active_id()))
+        self.queued.emit(job, label)
+        return job
 
     @staticmethod
     def _active_id() -> str | None:
@@ -104,39 +127,37 @@ class DownloadManager(QObject):
         if self._pipeline:
             self._pipeline.cancel()
 
-    def _resolver(self, profile: auth.Profile | None) -> Resolver:
+    def resolver(self, profile: auth.Profile | None) -> Resolver:
         return Resolver(auth.client(profile), cover_size=self.settings.cover_size,
                         prefer_album_versions=self.settings.prefer_album_versions)
 
     def _loop(self) -> None:
         while True:
-            kind, ident, label, profile_id = self._queue.get()
+            job, kind, ident, label, profile_id = self._queue.get()
             # A profile removed while its download was queued falls back to the active one.
             profile = auth.get_profile(profile_id) or auth.active_profile()
             self._cancel_all.clear()
             try:
                 self.resolving.emit(label)
-                resolver = self._resolver(profile)
+                resolver = self.resolver(profile)
                 collection: Collection = (
-                    resolver.resolve_url(ident) if kind == "url" else resolver.playlist_collection(ident)
+                    ident if kind == "collection"
+                    else resolver.resolve_url(ident) if kind == "url" else resolver.playlist_collection(ident)
                 )
                 if self._cancel_all.is_set():
                     continue
-                self.started.emit(collection)
+                self.started.emit(job, collection)
                 self._pipeline = Pipeline(self.library, workers=self.settings.parallel_downloads,
                                           cover_size=self.settings.cover_size,
                                           cookies=auth.cookies_file(profile),
                                           profile_id=profile.id if profile else "")
-                counts = self._pipeline.run(collection, self._on_event)
-                self.finished.emit(collection, counts)
+                counts = self._pipeline.run(collection, lambda event: self.track_event.emit(job, event))
+                self.finished.emit(job, collection, counts)
                 self.library_changed.emit()
             except Exception as exc:
                 traceback.print_exc()
-                self.error.emit(label, str(exc) or type(exc).__name__)
+                self.error.emit(job, label, str(exc) or type(exc).__name__)
             finally:
                 self._pipeline = None
                 if self._queue.empty():
                     self.idle.emit()
-
-    def _on_event(self, event: TrackEvent) -> None:
-        self.track_event.emit(event)

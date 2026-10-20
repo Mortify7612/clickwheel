@@ -16,10 +16,12 @@ from .._version import __version__
 from ..config import APP_NAME, DB_FILE, Settings
 from ..library import Library
 from .device_page import DevicePage
-from .fonts import load_fonts, ui_font
+from .fonts import load_fonts
 from .lcd import BARS, LcdDisplay
 from .player import Player
 from .player_bar import PlayerBar
+from .ribbon import TitleBar
+from .table_style import restyle_table
 from .library_page import LibraryPage
 from .theme import THEMES, apply_theme, is_retro
 from .update_dialog import check_for_updates
@@ -58,6 +60,9 @@ class SettingsDialog(QDialog):
             self.theme.addItem(label, key)
         self.theme.setCurrentIndex(max(0, self.theme.findData(settings.theme)))
         form.addRow("Theme", self.theme)
+        self.status_bar = QCheckBox("Show the status bar at the bottom of the window")
+        self.status_bar.setChecked(settings.show_status_bar)
+        form.addRow(self.status_bar)
         self.auto_update = QCheckBox("Check for Clickwheel updates once a day")
         self.auto_update.setChecked(settings.check_for_updates)
         form.addRow(self.auto_update)
@@ -84,6 +89,7 @@ class SettingsDialog(QDialog):
         self.settings.rockbox_prefers_files = self.rockbox_files.isChecked()
         self.settings.check_for_updates = self.auto_update.isChecked()
         self.settings.theme = self.theme.currentData()
+        self.settings.show_status_bar = self.status_bar.isChecked()
         apply_theme(QApplication.instance(), self.settings.theme)
         self.settings.parallel_downloads = self.parallel.value()
         self.settings.cover_size = self.cover.value()
@@ -101,6 +107,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1100, 720)
         status = self.statusBar()
+        # Messages always go through the status bar; the LCD ticker shows them too, so the
+        # bar itself is optional.
+        status.setVisible(self.settings.show_status_bar)
 
         self.ytm_page = YtmPage(self.manager, status)
         self.library_page = LibraryPage(self.library, self.manager)
@@ -122,8 +131,10 @@ class MainWindow(QMainWindow):
         self.player_bar = PlayerBar(self.player)
         central = QWidget()
         column = QVBoxLayout(central)
-        column.setContentsMargins(6, 4, 6, 0)
-        column.setSpacing(4)
+        column.setContentsMargins(6, 4, 6, 6)
+        column.setSpacing(6)
+        self.title_bar = TitleBar("CLICKWHEEL")  # Winamp-style ribbed strip, retro skin only
+        column.addWidget(self.title_bar)
         column.addWidget(self.lcd)
         column.addWidget(self.player_bar)
         column.addWidget(tabs, 1)
@@ -159,7 +170,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(3000, lambda: check_for_updates(self, self.settings, manual=False))
 
     def restyle(self) -> None:
-        """Theme-dependent touches a stylesheet can't express (e.g. uppercase tab labels)."""
+        """Theme-dependent touches a stylesheet can't express (uppercase tab labels, table fonts)."""
         for tabs in (self._tabs, self.device_page.bottom):
             # The stylesheet sets the tab font, so capitalise the labels themselves.
             for i in range(tabs.count()):
@@ -169,7 +180,9 @@ class MainWindow(QMainWindow):
                     tabs.tabBar().setTabData(i, original)
                 tabs.setTabText(i, original.upper() if is_retro() else original)
         for table in (self.library_page.table, self.device_page.browser.table, self.ytm_page.table):
-            table.viewport().update()
+            restyle_table(table)
+        self.player_bar.refresh_icons()
+        self.title_bar.setVisible(is_retro())
 
     def _wire_lcd(self, status) -> None:
         lcd = self.lcd
@@ -178,7 +191,7 @@ class MainWindow(QMainWindow):
                                                       lcd.set_message(f"Looking up {label}")))
         self.manager.idle.connect(lambda: lcd.set_busy("downloads", False))
 
-        def on_track(ev):
+        def on_track(_job, ev):
             from ..pipeline import Status
 
             if ev.status == Status.DOWNLOADING:
@@ -191,9 +204,11 @@ class MainWindow(QMainWindow):
 
         # Playback drives the ticker, clock and (real) spectrum meter.
         player = self.player
-        player.track_changed.connect(lambda item: lcd.set_now_playing(item.label if item else "", "playing"))
+        player.track_changed.connect(
+            lambda item: lcd.set_now_playing(item.artist if item else "", item.title if item else "", "playing"))
         player.state_changed.connect(
-            lambda state: lcd.set_now_playing(player.current.label if player.current else "", state))
+            lambda state: lcd.set_now_playing(player.current.artist if player.current else "",
+                                              player.current.title if player.current else "", state))
         player.position_changed.connect(lcd.set_clock)
         player.spectrum.connect(lcd.set_spectrum)
         player.error.connect(lambda msg: self.statusBar().showMessage(msg, 8000))
@@ -221,6 +236,7 @@ class MainWindow(QMainWindow):
         if not dlg.exec():
             return
         changed_folder = dlg.apply()
+        self.statusBar().setVisible(self.settings.show_status_bar)
         self.restyle()
         if changed_folder:
             QMessageBox.information(self, "Restart needed",
@@ -233,7 +249,6 @@ def main() -> int:
     app.setDesktopFileName("clickwheel")
     app.setWindowIcon(QIcon(str(ICON_PATH)))
     load_fonts()
-    app.setFont(ui_font(9.5))
     apply_theme(app, Settings.load().theme)
     window = MainWindow()
     window.show()

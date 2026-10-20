@@ -12,11 +12,14 @@ from PySide6.QtCore import QEvent, QObject, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPalette
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QStyle, QStyledItemDelegate, QTableWidget
 
-from .fonts import label_font, mono_font, ui_font
+from .fonts import label_font, mono_font, ui_families, ui_font
+from .ribbon import paint_ribs
 from .theme import is_retro
 
 TITLE, TEXT, MUTED, NUMBER = "title", "text", "muted", "number"
+SECTION = Qt.UserRole + 40  # truthy on a group header row (span it across the table)
 ROW_HEIGHT = 46
+SECTION_HEIGHT = 32
 COVER = 36
 # Retro skin: phosphor greens, brightest for titles, dimmer for supporting text.
 RETRO_TIERS = {TITLE: QColor("#5dff96"), TEXT: QColor("#2fd36c"), MUTED: QColor("#1d9a4c"), NUMBER: QColor("#1d9a4c")}
@@ -32,9 +35,17 @@ class TrackDelegate(QStyledItemDelegate):
     def __init__(self, kinds: dict[int, str], parent=None):
         super().__init__(parent)
         self.kinds = kinds
+        self._fonts_for: tuple | None = None
+
+    def _fonts(self, retro: bool) -> None:
+        """(Re)build the cell fonts when the theme's typeface changes."""
+        key = (ui_families(), retro)
+        if key == self._fonts_for:
+            return
+        self._fonts_for = key
         self._title_font = ui_font(9.5, QFont.Medium)
         self._text_font = ui_font(9)
-        self._number_font = mono_font(9)
+        self._number_font = mono_font(9) if retro else ui_font(9)
 
     def sizeHint(self, option, index) -> QSize:
         return QSize(super().sizeHint(option, index).width(), ROW_HEIGHT)
@@ -62,6 +73,10 @@ class TrackDelegate(QStyledItemDelegate):
     def paint(self, p, option, index) -> None:
         kind = self.kinds.get(index.column(), TEXT)
         retro = is_retro()
+        self._fonts(retro)
+        if index.data(SECTION):
+            self._paint_section(p, option, index)
+            return
         pal = option.palette
         base, text = pal.color(QPalette.Base), pal.color(QPalette.Text)
         rect = option.rect
@@ -132,6 +147,35 @@ class TrackDelegate(QStyledItemDelegate):
         p.restore()
 
 
+    @staticmethod
+    def _paint_section(p, option, index) -> None:
+        """A group header: a soft band with a small caps label in the accent colour
+        (retro: the label trailed by Winamp's gold ribs)."""
+        pal = option.palette
+        base, text = pal.color(QPalette.Base), pal.color(QPalette.Text)
+        rect = option.rect
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(rect, base)
+        retro = is_retro()
+        if not retro:
+            band = QPainterPath()
+            band.addRoundedRect(QRectF(rect).adjusted(4, 4, -4, -2), 7, 7)
+            p.fillPath(band, _mix(base, text, 0.07))
+        font = label_font(8)
+        p.setFont(font)
+        p.setPen(pal.color(QPalette.Link))
+        inner = rect.adjusted(14, 2, -14, 0)
+        metrics = QFontMetrics(font)
+        label = metrics.elidedText(str(index.data(Qt.DisplayRole) or ""), Qt.ElideRight, inner.width() - 30)
+        p.drawText(inner, Qt.AlignLeft | Qt.AlignVCenter, label)
+        if retro:
+            p.setRenderHint(QPainter.Antialiasing, False)
+            start = inner.left() + metrics.horizontalAdvance(label) + 10
+            paint_ribs(p, QRect(start, rect.top() + 1, inner.right() - start, rect.height()))
+        p.restore()
+
+
 class _ProportionalColumns(QObject):
     """Share the width left over by fixed columns between weighted ones on every resize."""
 
@@ -167,6 +211,15 @@ def style_header(table: QTableWidget, kinds: dict[int, str]) -> None:
         item.setFont(font)
         right = kinds.get(col) == NUMBER
         item.setTextAlignment((Qt.AlignRight if right else Qt.AlignLeft) | Qt.AlignVCenter)
+
+
+def restyle_table(table: QTableWidget) -> None:
+    """Pick up a theme change: header fonts are set per item, so refresh them."""
+    table.horizontalHeader().setFont(label_font())
+    delegate = table.itemDelegate()
+    if isinstance(delegate, TrackDelegate):
+        style_header(table, delegate.kinds)
+    table.viewport().update()
 
 
 def style_track_table(table: QTableWidget, kinds: dict[int, str], widths: dict[int, int],

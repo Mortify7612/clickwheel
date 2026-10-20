@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from ..library import Library
 from . import workers
 from .artwork import ArtPanel, CoverCache, album_key
+from .ribbon import SectionLabel
 from .table_style import MUTED, NUMBER, TEXT, TITLE, style_track_table
 
 ALL = "__all__"
@@ -53,7 +54,7 @@ class LibraryPage(QWidget):
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
-        lv.addWidget(QLabel("<b>Collections</b>"))
+        lv.addWidget(SectionLabel("<b>Collections</b>"))
         lv.addWidget(self.lists, 1)
         lv.addWidget(self.update_btn)
         lv.addWidget(self.remove_list_btn)

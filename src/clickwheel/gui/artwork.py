@@ -158,8 +158,8 @@ class ArtPanel(QWidget):
         self.cover = QLabel()
         self.cover.setAlignment(Qt.AlignCenter)
         self.title = QLabel()
-        font = self.title.font()
-        font.setPointSizeF(font.pointSizeF() * 1.2)
+        font = QFont()  # size and weight only, so the family follows the theme
+        font.setPointSizeF(11.5)
         font.setBold(True)
         self.title.setFont(font)
         self.artist = QLabel()
