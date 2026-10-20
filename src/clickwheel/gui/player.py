@@ -100,6 +100,8 @@ class Player(QObject):
         self._pos = -1                # index into _order
         self.shuffle = False
         self.repeat = False
+        self._resume_at: int | None = None  # restored position, applied once the song has loaded
+        self._resume_duration = 0
         self.set_volume(0.7)
 
         self._buffers.audioBufferReceived.connect(self._on_buffer)
@@ -143,10 +145,52 @@ class Player(QObject):
         if item is None:
             self.stop()
             return
+        self._resume_at = None
         self._analyzer.reset()
         self._player.setSource(QUrl.fromLocalFile(str(item.path)))
         self._player.play()
         self.track_changed.emit(item)
+
+    # ── Saving and restoring (so a restart picks up where you left off) ──
+
+    def snapshot(self) -> dict | None:
+        """The queue, the song and how far into it, as plain data (None if nothing is loaded)."""
+        if self.current is None:
+            return None
+        position = self._resume_at if self._resume_at is not None else self._player.position()
+        return {
+            "queue": [{"path": str(i.path), "title": i.title, "artist": i.artist, "album": i.album}
+                      for i in self._queue],
+            "order": self._order, "pos": self._pos,
+            "position": position, "duration": self._player.duration() or self._resume_duration,
+            "shuffle": self.shuffle, "repeat": self.repeat, "volume": self.volume,
+        }
+
+    def restore(self, state: dict) -> bool:
+        """Load a :meth:`snapshot` paused at its position. False if it no longer makes sense
+        (malformed, or the song's file has gone)."""
+        try:
+            queue = [PlayItem(Path(i["path"]), i["title"], i["artist"], i.get("album", "")) for i in state["queue"]]
+            order, pos = [int(i) for i in state["order"]], int(state["pos"])
+            position, duration = max(0, int(state.get("position", 0))), max(0, int(state.get("duration", 0)))
+        except (KeyError, TypeError, ValueError):
+            return False
+        if sorted(order) != list(range(len(queue))) or not 0 <= pos < len(order):
+            return False
+        item = queue[order[pos]]
+        if not item.path.exists():
+            return False
+        self._queue, self._order, self._pos = queue, order, pos
+        self.shuffle, self.repeat = bool(state.get("shuffle")), bool(state.get("repeat"))
+        if "volume" in state:
+            self.set_volume(float(state["volume"]))
+        self._resume_at, self._resume_duration = position, duration
+        self._analyzer.reset()
+        self._player.setSource(QUrl.fromLocalFile(str(item.path)))
+        self.track_changed.emit(item)
+        self.position_changed.emit(position, duration)
+        self.state_changed.emit("paused")
+        return True
 
     # ── Transport ────────────────────────────────────────────────────────
 
@@ -155,6 +199,9 @@ class Player(QObject):
         if state == QMediaPlayer.PlayingState:
             self._player.pause()
         elif self.current is not None:
+            if self._resume_at is not None:  # pressed play before the restored song finished loading
+                self._player.setPosition(self._resume_at)
+                self._resume_at = None
             self._player.play()
 
     def stop(self) -> None:
@@ -191,6 +238,9 @@ class Player(QObject):
         self._load_current()
 
     def seek(self, ms: int) -> None:
+        if self._resume_at is not None:  # still loading a restored song: seek once it's ready
+            self._resume_at = ms
+            return
         self._player.setPosition(ms)
 
     def set_volume(self, fraction: float) -> None:
@@ -216,7 +266,12 @@ class Player(QObject):
             self.spectrum.emit(self._analyzer.feed(samples * self._output.volume(), rate))
 
     def _on_status(self, status) -> None:
-        if status == QMediaPlayer.EndOfMedia:
+        if status == QMediaPlayer.LoadedMedia and self._resume_at is not None:
+            # A restored song: hold it paused where it was.
+            position, self._resume_at = self._resume_at, None
+            self._player.pause()
+            self._player.setPosition(position)
+        elif status == QMediaPlayer.EndOfMedia:
             self.next(auto=True)
         elif status == QMediaPlayer.InvalidMedia:
             self.error.emit(f"Can't play {self.current.path.name if self.current else 'this file'}")

@@ -17,6 +17,7 @@ DATA_DIR = Path(user_data_dir(APP_NAME, appauthor=False))
 HEADERS_FILE = CONFIG_DIR / "ytm_headers.json"
 COOKIES_FILE = CONFIG_DIR / "cookies.txt"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
+PLAYBACK_FILE = CONFIG_DIR / "playback.json"  # the song you were on, to pick up after a restart
 DB_FILE = DATA_DIR / "library.sqlite3"
 
 
@@ -32,7 +33,7 @@ class Settings:
     rockbox_prefers_files: bool = True
     check_for_updates: bool = True
     show_status_bar: bool = False  # the LCD ticker already shows status messages
-    theme: str = "retro"  # "retro" | "y2k" | "bliss" | "aqua" | "system"
+    theme: str = "retro"  # "retro" | "y2k" | "bliss" | "aqua" | "halo" | "system"
     last_update_check: float = 0.0
 
     @classmethod

@@ -1,4 +1,4 @@
-"""App themes: original skins (retro player, Y2K bubblegum, XP Bliss, Aqua G3), or the system look."""
+"""App themes: original skins (retro player, Y2K bubblegum, XP Bliss, Aqua G3, Halo), or the system look."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication, QStyleFactory
 
 from .fonts import ui_font, use_theme_fonts
 
-THEMES = {"retro": "Retro player", "y2k": "Y2K bubblegum", "bliss": "XP Bliss", "aqua": "Aqua G3", "system": "System"}
+THEMES = {"retro": "Retro player", "y2k": "Y2K bubblegum", "bliss": "XP Bliss", "aqua": "Aqua G3", "halo": "Halo", "system": "System"}
 
 # Palette for the retro skin: a classic Winamp-style player (charcoal-blue frame, boxy
 # bevelled buttons, gold ribs) around phosphor-green "matrix" song lists.
@@ -150,127 +150,154 @@ QFrame#PlayerDeck QPushButton#PlayButton {{ min-width: 44px; max-width: 44px; mi
 """
 
 
-# ── Y2K bubblegum: icy blue and candy pink, glossy gel pills and bubbles ─────
+# ── Y2K bubblegum: pastel dream gradient, frosted-glass panels, jelly candy gloss ─
+# Panels are see-through so the bubbles and sparkles painted behind them show
+# (see sparkle.Backdrop). Glass is white at partial opacity with a bright white rim.
 
-Y_TEXT = "#2a2266"
-Y_MUTED = "#7b78a8"
-Y_PINK = "#ff4fa8"
-Y_PINK_SOFT = "#ffb3dc"
-Y_BLUE = "#2f9bff"
-Y_BLUE_SOFT = "#9fd2ff"
-Y_SELECT = "#3aa0ff"
-# Aqua-style gel: a bright highlight on the top half, a hard edge, then a glowing bottom.
-Y_BLUE_GEL = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d2efff, stop:0.48 #74c6ff, stop:0.52 #2f9bff, stop:1 #8fd6ff)"
-Y_PINK_GEL = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffe3f2, stop:0.48 #ff94cc, stop:0.52 #ff4fa8, stop:1 #ffa3d6)"
-Y_BUBBLE = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:0.48 #eaf5ff, stop:0.52 #cfe8ff, stop:1 #eef8ff)"
-Y_CANDY = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #5ab8ff, stop:1 #ff6fbf)"
+Y_TEXT = "#4a2a7a"       # deep plum
+Y_MUTED = "#9a86c0"
+Y_PINK = "#ff5fb4"
+Y_PINK_SOFT = "#ffc2e2"
+Y_LILAC = "#a98bff"
+Y_SELECT = "#ff6fbf"
+Y_GLASS = "rgba(255, 255, 255, 115)"
+Y_RIM = "rgba(255, 255, 255, 225)"
+# Jelly gloss: a bright top half, a hard edge, then a glowing bottom.
+Y_PINK_GEL = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fff0f8, stop:0.44 #ffb3da, stop:0.5 #ff6fbf, stop:1 #ffb0dc)"
+Y_LILAC_GEL = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f6f0ff, stop:0.44 #d6c4ff, stop:0.5 #a98bff, stop:1 #d6c8ff)"
+Y_JELLY = ("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255, 255, 255, 240), stop:0.46 rgba(255, 242, 250, 175), "
+           "stop:0.52 rgba(255, 214, 236, 150), stop:1 rgba(255, 238, 248, 210))")
+Y_JELLY_HOVER = ("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255, 255, 255, 250), stop:0.46 rgba(255, 228, 243, 210), "
+                 "stop:0.52 rgba(255, 190, 225, 200), stop:1 rgba(255, 226, 242, 230))")
+Y_CANDY = "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff8fcf, stop:0.5 #b79cff, stop:1 #6fc6ff)"
+Y_PEARL = ("qradialgradient(cx:0.5, cy:0.5, radius:0.6, fx:0.35, fy:0.28, stop:0 #ffffff, stop:0.3 #ffe6f4, "
+           "stop:0.75 #ff9fd4, stop:1 #e86aaf)")
 
 Y2K_QSS = f"""
-QMainWindow, QDialog {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                         stop:0 #dcefff, stop:0.55 #f1e9ff, stop:1 #ffe0f1); }}
+QMainWindow, QDialog {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ffd6ec, stop:0.35 #eadcff,
+                                                     stop:0.7 #cfe8ff, stop:1 #d6fbef); }}
 QWidget {{ color: {Y_TEXT}; }}
-QToolTip {{ background: #fff2f9; color: {Y_TEXT}; border: 2px solid {Y_PINK_SOFT}; border-radius: 10px;
-            padding: 4px 8px; }}
+QToolTip {{ background: rgba(255, 255, 255, 235); color: {Y_TEXT}; border: 2px solid {Y_PINK_SOFT};
+            border-radius: 12px; padding: 4px 9px; }}
 
-QMenuBar {{ background: {Y_BUBBLE}; border-bottom: 2px solid {Y_PINK_SOFT}; }}
+QMenuBar {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255, 255, 255, 200),
+                                        stop:1 rgba(255, 255, 255, 90));
+            border-bottom: 2px solid {Y_RIM}; }}
 QMenuBar::item {{ background: transparent; padding: 3px 12px; border-radius: 10px; }}
 QMenuBar::item:selected {{ background: {Y_PINK_GEL}; color: #ffffff; }}
-QMenu {{ background: #ffffff; border: 2px solid {Y_PINK_SOFT}; border-radius: 12px; padding: 5px; }}
-QMenu::item {{ padding: 5px 22px; border-radius: 9px; }}
-QMenu::item:selected {{ background: {Y_BLUE_GEL}; color: #ffffff; }}
+QMenu {{ background: rgba(255, 255, 255, 235); border: 2px solid {Y_PINK_SOFT}; border-radius: 14px; padding: 6px; }}
+QMenu::item {{ padding: 5px 22px; border-radius: 10px; }}
+QMenu::item:selected {{ background: {Y_CANDY}; color: #ffffff; }}
 
-QTabWidget::pane {{ background: rgba(255, 255, 255, 140); border: 2px solid {Y_PINK_SOFT}; border-radius: 16px; }}
-QTabBar::tab {{ background: {Y_BUBBLE}; color: #5a5a9a; border: 2px solid {Y_BLUE_SOFT}; border-radius: 13px;
-                padding: 4px 18px; margin: 3px 3px 5px 3px; font-weight: bold; }}
-QTabBar::tab:selected {{ background: {Y_PINK_GEL}; color: #ffffff; border-color: {Y_PINK}; }}
-QTabBar::tab:hover:!selected {{ border-color: {Y_PINK_SOFT}; color: {Y_TEXT}; }}
+QTabWidget::pane {{ background: rgba(255, 255, 255, 80); border: 2px solid {Y_RIM}; border-radius: 22px; }}
+QTabBar::tab {{ background: {Y_JELLY}; color: #7a5aa8; border: 2px solid {Y_RIM}; border-radius: 14px;
+                padding: 4px 20px; margin: 3px 3px 6px 3px; font-weight: bold; }}
+QTabBar::tab:selected {{ background: {Y_PINK_GEL}; color: #ffffff; border-color: #ffe0f0; }}
+QTabBar::tab:hover:!selected {{ background: {Y_JELLY_HOVER}; color: {Y_TEXT}; }}
 
-QGroupBox {{ background: rgba(255, 255, 255, 170); border: 2px solid #bfe0ff; border-radius: 16px;
+QGroupBox {{ background: {Y_GLASS}; border: 2px solid {Y_RIM}; border-radius: 20px;
              margin-top: 16px; padding: 10px 8px 8px 8px; }}
-QGroupBox::title {{ subcontrol-origin: margin; left: 12px; padding: 0 4px; color: {Y_PINK}; font-weight: bold; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 14px; padding: 0 4px; color: #e0449a; font-weight: bold; }}
 
-QPushButton {{ background: {Y_BUBBLE}; color: {Y_TEXT}; border: 2px solid #7cc0ff; border-radius: 13px;
-               padding: 3px 12px; min-height: 18px; font-weight: bold; }}
-QPushButton:hover {{ border-color: {Y_PINK}; background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                     stop:0 #ffffff, stop:0.48 #fff0f8, stop:0.52 #ffd6ec, stop:1 #fff2fa); }}
-QPushButton:pressed, QPushButton:checked {{ background: {Y_PINK_GEL}; color: #ffffff; border-color: #e0408f; }}
-QPushButton:default {{ background: {Y_BLUE_GEL}; color: #ffffff; border-color: #1f7fe0; }}
-QPushButton:default:hover {{ border-color: {Y_PINK}; }}
-QPushButton:disabled {{ color: #b4b2d0; background: #f4f7fd; border-color: #d6e6f8; }}
+QPushButton {{ background: {Y_JELLY}; color: {Y_TEXT}; border: 2px solid {Y_RIM}; border-radius: 13px;
+               padding: 3px 14px; min-height: 18px; font-weight: bold; }}
+QPushButton:hover {{ background: {Y_JELLY_HOVER}; border-color: #ffe0f0; }}
+QPushButton:pressed, QPushButton:checked {{ background: {Y_PINK_GEL}; color: #ffffff; border-color: #ffe0f0; }}
+QPushButton:default {{ background: {Y_LILAC_GEL}; color: #ffffff; border-color: #efe6ff; }}
+QPushButton:default:hover {{ background: {Y_PINK_GEL}; }}
+QPushButton:disabled {{ color: #c4b6dc; background: rgba(255, 255, 255, 80); border-color: rgba(255, 255, 255, 140); }}
 
 QLineEdit, QPlainTextEdit, QTextBrowser, QSpinBox, QComboBox {{
-    background: #ffffff; color: {Y_TEXT}; border: 2px solid {Y_BLUE_SOFT}; border-radius: 12px; padding: 3px 10px;
-    selection-background-color: {Y_PINK}; selection-color: #ffffff; }}
-QLineEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QComboBox:focus {{ border-color: {Y_PINK}; }}
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color: #b4b2d0; background: #f7f9fe; }}
+    background: rgba(255, 255, 255, 175); color: {Y_TEXT}; border: 2px solid {Y_RIM}; border-radius: 13px;
+    padding: 3px 11px; selection-background-color: {Y_PINK}; selection-color: #ffffff; }}
+QLineEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QComboBox:focus {{ border-color: {Y_PINK_SOFT}; }}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color: #c4b6dc; }}
 QComboBox::drop-down {{ background: {Y_PINK_GEL}; width: 22px; border: none;
-                        border-top-right-radius: 10px; border-bottom-right-radius: 10px; }}
-QComboBox QAbstractItemView {{ background: #ffffff; color: {Y_TEXT}; selection-background-color: {Y_SELECT};
-                               border: 2px solid {Y_PINK_SOFT}; border-radius: 10px; padding: 4px; }}
+                        border-top-right-radius: 11px; border-bottom-right-radius: 11px; }}
+QComboBox QAbstractItemView {{ background: rgba(255, 255, 255, 240); color: {Y_TEXT};
+                               selection-background-color: {Y_SELECT}; border: 2px solid {Y_PINK_SOFT};
+                               border-radius: 12px; padding: 4px; }}
 
 QTableView, QTableWidget, QListView, QListWidget {{
-    background: #ffffff; alternate-background-color: #f6f9ff; color: {Y_TEXT}; gridline-color: #e8eefc;
-    border: 2px solid #bfe0ff; border-radius: 14px; padding: 3px;
+    background: {Y_GLASS}; alternate-background-color: rgba(255, 255, 255, 40); color: {Y_TEXT};
+    gridline-color: rgba(255, 255, 255, 120); border: 2px solid {Y_RIM}; border-radius: 18px; padding: 3px;
     selection-background-color: {Y_SELECT}; selection-color: #ffffff; outline: 0; }}
-QListView::item, QListWidget::item {{ padding: 6px 10px; margin: 1px 3px; border-radius: 10px; }}
-QListView::item:hover, QListWidget::item:hover {{ background: #fff0f8; }}
-QListView::item:selected, QListWidget::item:selected {{ background: {Y_BLUE_GEL}; color: #ffffff; }}
-QTableCornerButton::section {{ background: #fff4fa; border: none; }}
+/* Song rows are glass: the view's own square selection would show round the candy bar. */
+QTableView, QTableWidget {{ selection-background-color: transparent; }}
+QListView::item, QListWidget::item {{ padding: 6px 10px; margin: 1px 3px; border-radius: 12px; }}
+QListView::item:hover, QListWidget::item:hover {{ background: rgba(255, 182, 220, 70); }}
+QListView::item:selected, QListWidget::item:selected {{ background: {Y_CANDY}; color: #ffffff; }}
+QTableCornerButton::section {{ background: transparent; border: none; }}
 QHeaderView {{ background: transparent; }}
-QHeaderView::section {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fff6fb, stop:1 #ffdcef);
-                        color: #d6338a; border: none; border-bottom: 2px solid {Y_PINK_SOFT};
-                        border-right: 1px solid #ffe3f2; padding: 0 10px; }}
-QHeaderView::section:first {{ border-top-left-radius: 11px; }}
-QHeaderView::section:last {{ border-top-right-radius: 11px; border-right: none; }}
+QHeaderView::section {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255, 255, 255, 210),
+                                                    stop:1 rgba(255, 214, 236, 140));
+                        color: #e0449a; border: none; border-bottom: 2px solid rgba(255, 182, 220, 190);
+                        border-right: 1px solid rgba(255, 255, 255, 200); padding: 0 10px; }}
+QHeaderView::section:first {{ border-top-left-radius: 15px; }}
+QHeaderView::section:last {{ border-top-right-radius: 15px; border-right: none; }}
 QHeaderView::section:hover {{ color: {Y_PINK}; }}
 
-QProgressBar {{ background: #ffffff; border: 2px solid {Y_BLUE_SOFT}; border-radius: 10px; color: {Y_TEXT};
-                text-align: center; min-height: 16px; font-weight: bold; }}
-QProgressBar::chunk {{ background: {Y_CANDY}; margin: 2px; border-radius: 7px; }}
+/* A string of shiny candy beads. */
+QProgressBar {{ background: rgba(255, 255, 255, 150); border: 2px solid {Y_RIM}; border-radius: 11px;
+                color: {Y_TEXT}; text-align: center; min-height: 16px; font-weight: bold; }}
+QProgressBar::chunk {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #fff3fa, stop:0.45 #ffa6d6,
+                                                   stop:1 #ff6fbf);
+                       width: 11px; margin: 3px 1px; border-radius: 5px; }}
 
-QScrollBar:vertical {{ background: transparent; width: 12px; margin: 4px 2px; }}
-QScrollBar:horizontal {{ background: transparent; height: 12px; margin: 2px 4px; }}
-QScrollBar::handle {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ffc9e6, stop:1 #ff8cc8);
-                      border-radius: 4px; min-height: 28px; min-width: 28px; }}
-QScrollBar::handle:hover {{ background: {Y_PINK}; }}
+QScrollBar:vertical {{ background: transparent; width: 12px; margin: 6px 2px; }}
+QScrollBar:horizontal {{ background: transparent; height: 12px; margin: 2px 6px; }}
+QScrollBar::handle {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #f3ecff, stop:0.5 #cdb9ff,
+                                                  stop:1 #a98bff);
+                      border: 1px solid {Y_RIM}; border-radius: 5px; min-height: 28px; min-width: 28px; }}
+QScrollBar::handle:hover {{ background: {Y_PINK_GEL}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 
+/* Checkboxes and radio buttons are both little bubbles. */
 QRadioButton::indicator, QCheckBox::indicator, QAbstractItemView::indicator {{
-    width: 12px; height: 12px; background: #ffffff; border: 2px solid #7cc0ff; border-radius: 5px; }}
-QRadioButton::indicator {{ border-radius: 8px; }}
-QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {{ background: {Y_PINK_GEL}; border-color: #e0408f; }}
-QRadioButton::indicator:checked {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.4, fy:0.35,
-                                     stop:0 #ffd6ec, stop:0.5 {Y_PINK}, stop:0.62 #ffffff); border-color: #e0408f; }}
-QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {{ background: #f4f7fd; border-color: #d6e6f8; }}
+    width: 13px; height: 13px; background: rgba(255, 255, 255, 200); border: 2px solid #c9b6ff; border-radius: 8px; }}
+QCheckBox::indicator:checked, QAbstractItemView::indicator:checked, QRadioButton::indicator:checked {{
+    background: {Y_PEARL}; border-color: #ff8fcf; }}
+QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {{ background: rgba(255, 255, 255, 90);
+                                                                   border-color: #e6dcf6; }}
 
-QSlider:horizontal {{ min-height: 22px; }}
-QSlider::groove:horizontal {{ background: #ffffff; border: 2px solid {Y_BLUE_SOFT}; height: 6px; border-radius: 5px; }}
-QSlider::sub-page:horizontal {{ background: {Y_CANDY}; border: 2px solid #7cc0ff; height: 6px; border-radius: 5px; }}
-QSlider::handle:horizontal {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.6, fx:0.35, fy:0.3,
-                                                           stop:0 #ffffff, stop:0.35 #ffc6e5, stop:1 {Y_PINK});
-                              border: 1px solid #e0408f; width: 16px; height: 16px; margin: -6px 0; border-radius: 9px; }}
-QSlider::handle:horizontal:hover {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.6, fx:0.35, fy:0.3,
-                                                                 stop:0 #ffffff, stop:0.35 #bfe6ff, stop:1 {Y_BLUE}); }}
+QSlider:horizontal {{ min-height: 26px; }}
+QSlider::groove:horizontal {{ background: rgba(255, 255, 255, 170); border: 2px solid {Y_RIM}; height: 6px;
+                              border-radius: 5px; }}
+QSlider::sub-page:horizontal {{ background: {Y_CANDY}; border: 2px solid {Y_RIM}; height: 6px; border-radius: 5px; }}
+QSlider::handle:horizontal {{ background: {Y_PEARL}; border: 1px solid rgba(255, 255, 255, 240);
+                              width: 18px; height: 18px; margin: -6px 0; border-radius: 9px; }}
+QSlider::handle:horizontal:hover {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.6, fx:0.35, fy:0.28,
+                                    stop:0 #ffffff, stop:0.3 #eee6ff, stop:0.75 #b79cff, stop:1 #8a63e8); }}
 
 QSplitter::handle {{ background: transparent; }}
-QStatusBar {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #cfe8ff, stop:1 #ffd6ec);
-              color: {Y_TEXT}; border-top: 2px solid {Y_PINK_SOFT}; padding: 2px 6px; }}
+QStatusBar {{ background: rgba(255, 255, 255, 120); color: {Y_TEXT}; border-top: 2px solid {Y_RIM}; padding: 2px 6px; }}
 QDialogButtonBox QPushButton {{ min-width: 72px; }}
 
-QFrame#PlayerDeck {{ background: rgba(255, 255, 255, 170); border: 2px solid {Y_PINK_SOFT}; border-radius: 18px; }}
-QPushButton#DeckButton {{ color: {Y_TEXT}; }}
-QPushButton#PlayButton {{ background: {Y_PINK_GEL}; border: 2px solid #e0408f; color: #ffffff; }}
-QPushButton#PlayButton:hover {{ background: {Y_BLUE_GEL}; border-color: #1f7fe0; }}
+QFrame#PlayerDeck {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(255, 255, 255, 170),
+                                                 stop:1 rgba(255, 255, 255, 85));
+                     border: 2px solid {Y_RIM}; border-radius: 24px; }}
+QPushButton#DeckButton {{ color: #8a63e8; }}
+QPushButton#DeckButton:hover {{ background: rgba(255, 255, 255, 150); }}
+QPushButton#DeckButton:checked {{ background: rgba(255, 182, 220, 120); }}
+/* A big glossy candy: a white shine near the top over a pink jelly body. */
+QPushButton#PlayButton {{ background: qradialgradient(cx:0.5, cy:0.32, radius:0.75, fx:0.5, fy:0.12,
+                                                      stop:0 #ffffff, stop:0.32 #ffbfe0, stop:0.72 #ff5fb4,
+                                                      stop:1 #e0408f);
+                          border: 2px solid rgba(255, 255, 255, 240); color: #ffffff; }}
+QPushButton#PlayButton:hover {{ background: qradialgradient(cx:0.5, cy:0.32, radius:0.75, fx:0.5, fy:0.12,
+                                                            stop:0 #ffffff, stop:0.32 #e6dcff, stop:0.72 #a98bff,
+                                                            stop:1 #7c5ae0); }}
 """
 
 Y2K_ROLES = {
-    QPalette.Window: "#eef4ff", QPalette.WindowText: Y_TEXT, QPalette.Base: "#ffffff",
-    QPalette.AlternateBase: "#f6f9ff", QPalette.Text: Y_TEXT, QPalette.Button: "#e3f2ff",
+    # Base and AlternateBase are see-through, so the song tables paint as glass too.
+    QPalette.Window: "#f3e9ff", QPalette.WindowText: Y_TEXT, QPalette.Base: "#00ffffff",
+    QPalette.AlternateBase: "#28ffffff", QPalette.Text: Y_TEXT, QPalette.Button: "#ffe6f4",
     QPalette.ButtonText: Y_TEXT, QPalette.Highlight: Y_SELECT, QPalette.HighlightedText: "#ffffff",
-    QPalette.ToolTipBase: "#fff2f9", QPalette.ToolTipText: Y_TEXT, QPalette.PlaceholderText: Y_MUTED,
-    QPalette.Light: "#ffffff", QPalette.Dark: "#9fb8dd", QPalette.Mid: "#c9dcf5",
-    QPalette.Link: "#f0328f", QPalette.BrightText: Y_PINK,
+    QPalette.ToolTipBase: "#ffffff", QPalette.ToolTipText: Y_TEXT, QPalette.PlaceholderText: Y_MUTED,
+    QPalette.Light: "#ffffff", QPalette.Dark: "#c9b6e8", QPalette.Mid: "#e6dcf6",
+    QPalette.Link: "#ff3d9a", QPalette.BrightText: Y_PINK,
 }
 
 # ── XP Bliss: Luna blue bars, beige dialogs, green progress blocks ───────────
@@ -533,6 +560,136 @@ AQUA_ROLES = {
     QPalette.Link: "#00799a", QPalette.BrightText: A_BONDI,
 }
 
+# ── Halo: a UNSC heads-up display. Deep space navy, holographic cyan lines, square edges ─
+
+H_TEXT = "#d4eefc"
+H_MUTED = "#6f93ab"
+H_CYAN = "#5fd4ff"
+H_GLOW = "#9be8ff"
+H_LINE = "#2a6f96"   # dim hologram line
+H_DEEP = "#12304a"
+H_SELECT = "#1b7fb8"
+H_AMBER = "#ffb43a"  # HUD warnings
+H_BUTTON = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(30, 72, 104, 210), stop:1 rgba(9, 28, 48, 230))"
+H_HOVER = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(95, 212, 255, 70), stop:1 rgba(20, 70, 105, 220))"
+H_SHIELD = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #b8f0ff, stop:0.45 #4cc4f2, stop:1 #1a78b0)"
+
+HALO_QSS = f"""
+QMainWindow, QDialog {{ background: qradialgradient(cx:0.5, cy:0, radius:1.1, fx:0.5, fy:0,
+                         stop:0 #12324e, stop:0.55 #08182a, stop:1 #03070d); }}
+QWidget {{ color: {H_TEXT}; }}
+QToolTip {{ background: #08182a; color: {H_GLOW}; border: 1px solid {H_CYAN}; padding: 3px 6px; }}
+
+QMenuBar {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0d2238, stop:1 #071321);
+            border-bottom: 1px solid {H_LINE}; }}
+QMenuBar::item {{ background: transparent; padding: 4px 12px; }}
+QMenuBar::item:selected {{ background: rgba(95, 212, 255, 45); color: {H_GLOW}; }}
+QMenu {{ background: #081626; border: 1px solid {H_CYAN}; padding: 3px; }}
+QMenu::item {{ padding: 5px 22px; }}
+QMenu::item:selected {{ background: {H_SELECT}; color: #ffffff; }}
+
+/* Menu-style tabs: the active one lit from below with a cyan bar. */
+QTabWidget::pane {{ background: rgba(6, 18, 32, 150); border: 1px solid {H_LINE}; top: -1px; }}
+QTabBar::tab {{ background: transparent; color: {H_MUTED}; padding: 6px 22px; border: none;
+                border-bottom: 2px solid transparent; font-weight: bold; }}
+QTabBar::tab:selected {{ color: {H_GLOW}; border-bottom: 2px solid {H_CYAN};
+                         background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(95, 212, 255, 0),
+                                                     stop:1 rgba(95, 212, 255, 55)); }}
+QTabBar::tab:hover:!selected {{ color: {H_TEXT}; }}
+
+QGroupBox {{ background: rgba(10, 30, 50, 140); border: 1px solid {H_LINE}; border-top: 2px solid {H_CYAN};
+             margin-top: 16px; padding: 10px 8px 8px 8px; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 4px; color: {H_CYAN}; font-weight: bold; }}
+
+QPushButton {{ background: {H_BUTTON}; color: {H_TEXT}; border: 1px solid {H_LINE}; border-radius: 0;
+               padding: 3px 14px; min-height: 18px; font-weight: bold; }}
+QPushButton:hover {{ background: {H_HOVER}; border-color: {H_CYAN}; color: {H_GLOW}; }}
+QPushButton:pressed, QPushButton:checked {{ background: {H_CYAN}; color: #03101c; border-color: {H_GLOW}; }}
+QPushButton:default {{ border-color: {H_CYAN}; }}
+QPushButton:disabled {{ color: #3c5568; background: rgba(10, 25, 40, 150); border-color: #183247; }}
+
+QLineEdit, QPlainTextEdit, QTextBrowser, QSpinBox, QComboBox {{
+    background: rgba(3, 10, 18, 220); color: {H_GLOW}; border: 1px solid {H_LINE}; padding: 3px 8px;
+    selection-background-color: {H_SELECT}; selection-color: #ffffff; }}
+QLineEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QComboBox:focus {{ border-color: {H_CYAN}; }}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{ color: #3c5568; }}
+QComboBox::drop-down {{ background: rgba(95, 212, 255, 40); width: 20px; border-left: 1px solid {H_LINE}; }}
+QComboBox QAbstractItemView {{ background: #081626; color: {H_TEXT}; selection-background-color: {H_SELECT};
+                               border: 1px solid {H_CYAN}; }}
+
+QTableView, QTableWidget, QListView, QListWidget {{
+    background: rgba(4, 12, 22, 215); alternate-background-color: #0a1826; color: {H_TEXT};
+    gridline-color: {H_DEEP}; border: 1px solid {H_LINE}; selection-background-color: {H_SELECT};
+    selection-color: #ffffff; outline: 0; }}
+QTableView, QTableWidget {{ selection-background-color: transparent; }}  /* glass rows: see the delegate */
+QListView::item, QListWidget::item {{ padding: 5px 10px; border-left: 3px solid transparent; }}
+QListView::item:hover, QListWidget::item:hover {{ background: rgba(95, 212, 255, 25); }}
+QListView::item:selected, QListWidget::item:selected {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2aa6e0, stop:1 rgba(42, 166, 224, 50));
+    color: #ffffff; border-left: 3px solid {H_GLOW}; }}
+QTableCornerButton::section {{ background: #0b2034; border: none; }}
+QHeaderView {{ background: transparent; }}
+QHeaderView::section {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0f2a42, stop:1 #081a2c);
+                        color: {H_CYAN}; border: none; border-bottom: 1px solid {H_CYAN};
+                        border-right: 1px solid {H_DEEP}; padding: 0 10px; }}
+QHeaderView::section:last {{ border-right: none; }}
+QHeaderView::section:hover {{ color: {H_GLOW}; }}
+
+/* The shield meter. */
+QProgressBar {{ background: rgba(3, 10, 18, 220); border: 1px solid {H_LINE}; color: {H_GLOW}; text-align: center;
+                min-height: 16px; font-weight: bold; }}
+QProgressBar::chunk {{ background: {H_SHIELD}; width: 8px; margin: 2px 1px; }}
+
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
+QScrollBar::handle {{ background: rgba(95, 212, 255, 80); min-height: 28px; min-width: 28px; }}
+QScrollBar::handle:hover {{ background: {H_CYAN}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
+
+QRadioButton::indicator, QCheckBox::indicator, QAbstractItemView::indicator {{
+    width: 11px; height: 11px; background: rgba(3, 10, 18, 220); border: 1px solid {H_CYAN}; }}
+QRadioButton::indicator {{ border-radius: 6px; }}
+QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {{
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.7, fx:0.5, fy:0.5, stop:0 {H_GLOW}, stop:0.5 {H_CYAN},
+                                stop:0.56 rgba(3, 10, 18, 220)); }}
+QRadioButton::indicator:checked {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                                     stop:0 {H_GLOW}, stop:0.45 {H_CYAN}, stop:0.55 rgba(3, 10, 18, 220)); }}
+QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {{ border-color: #183247; }}
+
+/* A thin HUD line with a notch marker. */
+QSlider:horizontal {{ min-height: 20px; }}
+QSlider::groove:horizontal {{ background: rgba(95, 212, 255, 45); height: 2px; }}
+QSlider::sub-page:horizontal {{ background: {H_CYAN}; height: 2px; }}
+QSlider::handle:horizontal {{ background: {H_GLOW}; border: 1px solid #ffffff; width: 5px; margin: -7px 0; }}
+QSlider::handle:horizontal:hover {{ background: #ffffff; }}
+
+QSplitter::handle {{ background: transparent; }}
+QStatusBar {{ background: rgba(3, 10, 18, 230); color: {H_CYAN}; border-top: 1px solid {H_LINE}; padding: 2px 6px; }}
+QDialogButtonBox QPushButton {{ min-width: 72px; }}
+
+QFrame#PlayerDeck {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(16, 44, 70, 200),
+                                                 stop:1 rgba(6, 18, 32, 220));
+                     border: 1px solid {H_LINE}; border-top: 2px solid {H_CYAN}; }}
+QPushButton#DeckButton {{ color: {H_CYAN}; }}
+QPushButton#PlayButton {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                                                      stop:0 rgba(95, 212, 255, 110), stop:0.85 rgba(10, 40, 66, 230),
+                                                      stop:1 rgba(10, 40, 66, 230));
+                          border: 2px solid {H_CYAN}; color: {H_GLOW}; }}
+QPushButton#PlayButton:hover {{ background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                                                            stop:0 rgba(155, 232, 255, 170), stop:0.85 rgba(14, 56, 90, 230),
+                                                            stop:1 rgba(14, 56, 90, 230)); }}
+"""
+
+HALO_ROLES = {
+    QPalette.Window: "#07111d", QPalette.WindowText: H_TEXT, QPalette.Base: "#06111d",
+    QPalette.AlternateBase: "#0a1826", QPalette.Text: H_TEXT, QPalette.Button: "#0f2a42",
+    QPalette.ButtonText: H_TEXT, QPalette.Highlight: H_SELECT, QPalette.HighlightedText: "#ffffff",
+    QPalette.ToolTipBase: "#08182a", QPalette.ToolTipText: H_GLOW, QPalette.PlaceholderText: H_MUTED,
+    QPalette.Light: H_LINE, QPalette.Dark: "#02060b", QPalette.Mid: H_DEEP,
+    QPalette.Link: H_CYAN, QPalette.BrightText: H_AMBER,
+}
+
 RETRO_ROLES = {
     QPalette.Window: WINDOW, QPalette.WindowText: TEXT, QPalette.Base: LCD_BG,
     QPalette.AlternateBase: "#050a06", QPalette.Text: LCD_TEXT, QPalette.Button: "#4a4a64",
@@ -561,6 +718,7 @@ SKINS = {
     "y2k": (Y2K_ROLES, Y2K_QSS, "#b4b2d0"),
     "bliss": (BLISS_ROLES, BLISS_QSS, "#aca899"),
     "aqua": (AQUA_ROLES, AQUA_QSS, "#a8a8a8"),
+    "halo": (HALO_ROLES, HALO_QSS, "#3c5568"),
 }
 
 
@@ -589,18 +747,26 @@ class LcdSkin:
     screen: tuple = ("#020805", "#020805")  # top, bottom
     bezel: tuple = ("#62626f", "#3a3a44", "#18181d")
     scene: str | None = None
+    text_left: int = 2  # dots before the text starts (room for a scene's instrument)
 
 
 LCD_SKINS = {
+    # A HUD readout over Installation 04 orbiting its gas giant; the meter drains like
+    # shields, from blue through amber to red.
+    "halo": LcdSkin(lit="#8fe6ff", mid="#ffb43a", peak="#ffffff", unlit=(90, 170, 210, 30),
+                    meter=("#1a78b0", "#3fb8ee", "#8fe6ff", "#ffb43a", "#ff4a3a"),
+                    screen=("#02060d", "#071426"), bezel=("#5a6874", "#2b343c", "#0d1216"), scene="halo",
+                    text_left=24),  # clear of the motion tracker
     # Winamp's display: green on black, a green-yellow-red analyser with grey peaks,
     # and the logo's lightning bolt glowing faintly behind it all.
     "retro": LcdSkin(lit="#2cf02c", mid="#f0d02c", peak="#a0a0b0", unlit=(10, 34, 10, 255),
                      meter=("#18a018", "#3cd23c", "#d8d820", "#ec8c1c", "#f0281c"),
                      screen=("#000000", "#000000"), bezel=("#50506e", "#2a2a40", "#0e0e18"),
                      scene="lightning"),
-    "y2k": LcdSkin(lit="#86f6ff", mid="#ff8ce0", peak="#ffffff",
-                   meter=("#5ff3ff", "#6fa8ff", "#b48cff", "#ff7ad9", "#ff4fa8"), unlit=(70, 42, 130, 255),
-                   screen=("#160b44", "#33115c"), bezel=("#ffe3f2", "#ff8fca", "#d9408f")),
+    # A pastel Tamagotchi screen in a glossy candy shell, bubbles drifting up behind the dots.
+    "y2k": LcdSkin(lit="#b0389b", mid="#7c4fe0", peak="#4a2a7a", unlit=(176, 120, 200, 55),
+                   meter=("#5ab8ff", "#8f7bff", "#c86bff", "#ff5fb4", "#ff2d6f"),
+                   screen=("#fff3fa", "#e9e0ff"), bezel=("#ffffff", "#ffc2e2", "#d58ae0"), scene="bubbles"),
     "bliss": LcdSkin(lit="#ffffff", mid="#ffe14d", peak="#ffffff",
                      meter=("#8ff03a", "#e3f53a", "#ffd23a", "#ff9a2e", "#ff4b2b"), unlit=(255, 255, 255, 34),
                      bezel=("#3d95ff", "#0058e6", "#003fb8"), scene="bliss"),
@@ -617,6 +783,10 @@ _current = "system"
 
 def is_retro() -> bool:
     return _current == "retro"
+
+
+def current_theme() -> str:
+    return _current
 
 
 def lcd_skin() -> LcdSkin:

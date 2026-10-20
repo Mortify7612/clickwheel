@@ -47,3 +47,49 @@ def test_stereo_int16_buffer_becomes_mono_float():
     samples, rate = buffer_to_mono(QAudioBuffer(QByteArray(left_right.tobytes()), fmt))
     assert rate == 48000
     np.testing.assert_allclose(samples, [0.0, 0.25])
+
+
+@pytest.fixture
+def player():
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication
+
+    from clickwheel.gui.player import Player
+
+    QCoreApplication.instance() or QCoreApplication([])
+    return Player(16)
+
+
+def saved_state(library, position=61_000):
+    tracks = library.tracks()
+    return {
+        "queue": [{"path": str(library.root / t.relpath), "title": t.title, "artist": t.artist, "album": t.album}
+                  for t in tracks],
+        "order": [2, 0, 1], "pos": 1, "position": position, "duration": 200_000,
+        "shuffle": True, "repeat": True, "volume": 0.4,
+    }
+
+
+def test_restore_picks_up_the_saved_song_and_place(library, player):
+    state = saved_state(library)
+    assert player.restore(state)
+    assert player.current.title == library.tracks()[0].title  # order[pos] == 0
+    assert (player.shuffle, player.repeat) == (True, True)
+    assert player.volume == pytest.approx(0.4, abs=0.01)
+    snap = player.snapshot()
+    # Saving again before the song has loaded keeps the restored place, not 0.
+    assert snap["position"] == 61_000
+    assert (snap["order"], snap["pos"]) == ([2, 0, 1], 1)
+    assert [i["path"] for i in snap["queue"]] == [i["path"] for i in state["queue"]]
+
+
+def test_restore_refuses_stale_or_broken_saves(library, player):
+    assert not player.restore({})
+    assert not player.restore({**saved_state(library), "order": [0, 0, 1]})
+    assert not player.restore({**saved_state(library), "pos": 7})
+    gone = saved_state(library)
+    gone["queue"][0]["path"] = str(library.root / "deleted.m4a")
+    assert not player.restore(gone)
+    assert player.current is None and player.snapshot() is None

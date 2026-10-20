@@ -179,6 +179,13 @@ class PlayerBar(QFrame):
         self._on_state("stopped")
         self.refresh_icons()
 
+    def sync_from_player(self) -> None:
+        """Match the toggles and volume to the player (after it restores a saved session)."""
+        self.shuffle_btn.setChecked(self.player.shuffle)
+        self.repeat_btn.setChecked(self.player.repeat)
+        self.volume.setValue(round(self.player.volume * 100))
+        self._on_state("paused" if self.player.current is not None else "stopped")
+
     # ── Theme ────────────────────────────────────────────────────────────
 
     def refresh_icons(self) -> None:

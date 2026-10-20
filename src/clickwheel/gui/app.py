@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -9,21 +10,23 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QVBoxLayout, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
-    QMainWindow, QMessageBox, QPushButton, QSpinBox, QTabWidget, QWidget,
+    QAbstractItemView, QGroupBox, QHeaderView, QMainWindow, QMessageBox, QPushButton, QSpinBox, QTabWidget, QWidget,
 )
 
 from .._version import __version__
-from ..config import APP_NAME, DB_FILE, Settings
+from ..config import APP_NAME, DB_FILE, PLAYBACK_FILE, Settings
 from ..library import Library
 from .device_page import DevicePage
 from .fonts import load_fonts
 from .lcd import BARS, LcdDisplay
 from .player import Player
 from .player_bar import PlayerBar
+from .hud import HudBrackets
 from .ribbon import TitleBar
+from .sparkle import Backdrop
 from .table_style import restyle_table
 from .library_page import LibraryPage
-from .theme import THEMES, apply_theme, is_retro
+from .theme import THEMES, apply_theme, current_theme, is_retro
 from .update_dialog import check_for_updates
 from .workers import DownloadManager
 from .ytm_page import YtmPage
@@ -129,7 +132,7 @@ class MainWindow(QMainWindow):
         self.lcd = LcdDisplay()
         self.player = Player(BARS, self)
         self.player_bar = PlayerBar(self.player)
-        central = QWidget()
+        central = Backdrop()  # bubbles and sparkles behind the glass panels (Y2K)
         column = QVBoxLayout(central)
         column.setContentsMargins(6, 4, 6, 6)
         column.setSpacing(6)
@@ -141,7 +144,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self._tabs = tabs
         self._wire_lcd(status)
+        # HUD corner brackets on the display, the deck and every panel (Halo skin only).
+        panels = [self.lcd, self.player_bar] + [
+            w for w in self.findChildren(QAbstractItemView) + self.findChildren(QGroupBox)
+            if not isinstance(w, QHeaderView) and w.window() is self]  # not combo-box popups
+        self._hud = [HudBrackets(w) for w in panels]
         self.restyle()
+        self._keep_playback()
 
         def sync_songs(paths):
             tabs.setCurrentWidget(self.device_page)  # show progress where syncs live
@@ -183,6 +192,8 @@ class MainWindow(QMainWindow):
             restyle_table(table)
         self.player_bar.refresh_icons()
         self.title_bar.setVisible(is_retro())
+        for brackets in self._hud:
+            brackets.setVisible(current_theme() == "halo")
 
     def _wire_lcd(self, status) -> None:
         lcd = self.lcd
@@ -229,7 +240,39 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.Discard:
                 event.ignore()
                 return
+        self._save_playback()
         event.accept()
+
+    # ── Picking up where you left off ────────────────────────────────────
+
+    def _keep_playback(self) -> None:
+        """Restore the last song (paused where it was) and keep its place saved from now on."""
+        try:
+            state = json.loads(PLAYBACK_FILE.read_text())
+        except (OSError, ValueError):
+            state = None
+        if isinstance(state, dict) and self.player.restore(state):
+            self.player_bar.sync_from_player()
+        player = self.player
+        player.track_changed.connect(self._save_playback)
+        player.state_changed.connect(self._save_playback)
+        # While playing, note the position every few seconds, so even a crash loses little.
+        self._playback_timer = QTimer(self, interval=5000,
+                                      timeout=lambda: player.is_playing and self._save_playback())
+        self._playback_timer.start()
+
+    def _save_playback(self, *_args) -> None:
+        state = self.player.snapshot()
+        try:
+            if state is None:
+                PLAYBACK_FILE.unlink(missing_ok=True)
+                return
+            PLAYBACK_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = PLAYBACK_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state))
+            tmp.replace(PLAYBACK_FILE)  # never leave a half-written file
+        except OSError:
+            pass  # remembering the song is a nicety; never get in the way of playing it
 
     def _settings(self) -> None:
         dlg = SettingsDialog(self.settings, self)

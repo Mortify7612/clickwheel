@@ -15,11 +15,12 @@ import time
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
-    QPolygonF, QRadialGradient,
+    QBrush, QColor, QConicalGradient, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
+    QPixmap, QPolygonF, QRadialGradient,
 )
 from PySide6.QtWidgets import QWidget
 
+from .sparkle import TINTS, paint_bubble, paint_sparkle
 from .theme import LcdSkin, lcd_skin
 
 PITCH = 3        # screen pixels per dot (dot + gap)
@@ -63,7 +64,7 @@ def _blend(stops: tuple, t: float) -> QColor:
 BOLT = ((0.56, 0.0), (0.16, 0.58), (0.44, 0.58), (0.30, 1.0), (0.84, 0.36), (0.55, 0.36), (0.74, 0.0))
 
 
-def _paint_lightning(p: QPainter, rect: QRectF) -> None:
+def _paint_lightning(p: QPainter, rect: QRectF, _t: float) -> None:
     """A faint gold bolt behind the dots, glowing softly, dim enough to read text over."""
     h = rect.height() * 1.45
     w = h * 0.72
@@ -82,7 +83,110 @@ def _paint_lightning(p: QPainter, rect: QRectF) -> None:
     p.restore()
 
 
-def _paint_bliss(p: QPainter, rect: QRectF) -> None:
+# Motion tracker contacts: (angle in degrees, distance from the centre as a fraction).
+CONTACTS = ((38, 0.62), (148, 0.8), (205, 0.45), (300, 0.7))
+SWEEP_DEG_PER_S = 140
+
+
+def _paint_tracker(p: QPainter, centre: QPointF, r: float, t: float) -> None:
+    """Halo's motion tracker: rings and a crosshair, a rotating sweep, contacts flaring as it passes."""
+    cyan = QColor(95, 212, 255)
+    disc = QPainterPath()
+    disc.addEllipse(centre, r, r)
+    p.fillPath(disc, QColor(4, 20, 34, 150))
+    lead = -(t * SWEEP_DEG_PER_S) % 360  # clockwise
+    sweep = QConicalGradient(centre, lead)  # the tail trails counter-clockwise, where it's been
+    sweep.setColorAt(0, QColor(95, 212, 255, 120))
+    sweep.setColorAt(0.22, QColor(95, 212, 255, 0))
+    sweep.setColorAt(1, QColor(95, 212, 255, 0))
+    p.fillPath(disc, sweep)
+    p.setBrush(Qt.NoBrush)
+    for radius, alpha in ((r, 110), (r * 0.62, 45), (r * 0.28, 35)):
+        p.setPen(QPen(QColor(cyan.red(), cyan.green(), cyan.blue(), alpha), 1))
+        p.drawEllipse(centre, radius, radius)
+    p.setPen(QPen(QColor(cyan.red(), cyan.green(), cyan.blue(), 35), 1))
+    p.drawLine(QPointF(centre.x() - r, centre.y()), QPointF(centre.x() + r, centre.y()))
+    p.drawLine(QPointF(centre.x(), centre.y() - r), QPointF(centre.x(), centre.y() + r))
+    for angle, distance in CONTACTS:
+        since = (angle - lead) % 360  # degrees the sweep has turned since it passed
+        fade = max(0.0, 1 - since / 320)
+        a = math.radians(angle)
+        dot = QPointF(centre.x() + math.cos(a) * distance * r, centre.y() - math.sin(a) * distance * r)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 70, 50, int(40 + 160 * fade)))
+        p.drawEllipse(dot, 1.6 + 1.4 * fade, 1.6 + 1.4 * fade)
+    p.setBrush(cyan)  # you, at the centre
+    p.drawPolygon(QPolygonF([centre + QPointF(0, -3), centre + QPointF(2.5, 2.5), centre + QPointF(-2.5, 2.5)]))
+
+
+def _paint_halo(p: QPainter, rect: QRectF, t: float) -> None:
+    """Deep space: stars, a banded gas giant rising in the corner, the ring arcing across,
+    and the motion tracker sweeping in the bottom left."""
+    w, h, x, y = rect.width(), rect.height(), rect.left(), rect.top()
+    stars = random.Random(117)  # the same sky every frame
+    for _ in range(int(w // 9)):
+        alpha = stars.randint(50, 170)
+        size = 1.6 if stars.random() < 0.12 else 1.0
+        p.fillRect(QRectF(x + stars.random() * w, y + stars.random() * h, size, size), QColor(220, 236, 255, alpha))
+
+    # The gas giant, lit from the upper right, with faint bands.
+    centre, radius = QPointF(x + w * 0.80, y + h * 1.55), h * 1.25
+    body = QRadialGradient(centre + QPointF(radius * 0.35, -radius * 0.45), radius * 1.3)
+    body.setColorAt(0, QColor(196, 128, 64, 150))
+    body.setColorAt(0.6, QColor(110, 62, 30, 130))
+    body.setColorAt(1, QColor(30, 16, 10, 120))
+    planet = QPainterPath()
+    planet.addEllipse(centre, radius, radius)
+    p.fillPath(planet, body)
+    p.save()
+    p.setClipPath(planet)
+    for i in range(5):
+        band_y = centre.y() - radius * (0.95 - i * 0.12)
+        p.fillRect(QRectF(x, band_y, w, radius * 0.05), QColor(240, 190, 120, 22))
+    p.restore()
+    p.strokePath(planet, QPen(QColor(255, 200, 140, 60), 1.5))
+
+    # The ring: a thin tilted band, its far side dim and its near side bright.
+    p.save()
+    p.translate(x + w * 0.63, y + h * 0.52)
+    p.rotate(-11)
+    ring = QRectF(-h * 1.9, -h * 0.36, h * 3.8, h * 0.72)
+    p.setPen(QPen(QColor(110, 140, 165, 110), 2.5))
+    p.drawArc(ring, 0, 180 * 16)
+    p.setPen(QPen(QColor(200, 222, 238, 170), 4))
+    p.drawArc(ring, 180 * 16, 180 * 16)
+    p.setPen(QPen(QColor(120, 220, 255, 80), 1))  # atmosphere glinting on the inner surface
+    p.drawArc(ring.adjusted(3, 3, -3, -3), 185 * 16, 170 * 16)
+    p.restore()
+
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing)
+    _paint_tracker(p, QPointF(x + h * 0.5 + 2, y + h * 0.5), h * 0.42, t)
+    p.restore()
+
+
+def _paint_bubbles(p: QPainter, rect: QRectF, t: float) -> None:
+    """Soap bubbles drifting up the screen and sparkles twinkling in and out."""
+    w, h, x, y = rect.width(), rect.height(), rect.left(), rect.top()
+    rng = random.Random(1999)  # the same bubbles every frame; time moves them
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing)
+    for i in range(10):
+        r = h * rng.uniform(0.1, 0.3)
+        travel = h + 2 * r
+        speed = rng.uniform(5, 13)  # px per second
+        rise = (t * speed + rng.random() * travel) % travel
+        cx = x + rng.random() * w + math.sin(t * 0.7 + i) * 3  # a little wobble
+        paint_bubble(p, QPointF(cx, y + h + r - rise), r, TINTS[i % len(TINTS)])
+    for i in range(9):
+        twinkle = max(0.0, math.sin(t * 2.1 + i * 1.7))
+        tint = TINTS[i % len(TINTS)]
+        paint_sparkle(p, QPointF(x + rng.random() * w, y + rng.random() * h), rng.uniform(3, 5.5),
+                      QColor(tint.red(), tint.green(), tint.blue(), int(200 * twinkle)))
+    p.restore()
+
+
+def _paint_bliss(p: QPainter, rect: QRectF, _t: float) -> None:
     """A rolling green hill under a blue sky with soft clouds."""
     sky = QLinearGradient(rect.topLeft(), rect.bottomLeft())
     sky.setColorAt(0, QColor("#1f5fcf"))
@@ -223,7 +327,14 @@ class LcdDisplay(QWidget):
         right = metrics.horizontalAdvance(self._clock_text())
         if self._active:
             right += metrics.horizontalAdvance("◆ BUSY") + 8
-        return self._ticker_cols() - right - (8 if right else 0)
+        return self._ticker_cols() - right - (8 if right else 0) - self._text_left()
+
+    def _text_left(self) -> int:
+        return (self._skin or lcd_skin()).text_left
+
+    def _ticker_width(self) -> int:
+        """Room for the ticker: from the text margin to the meter."""
+        return self._ticker_cols() - self._text_left()
 
     # ── Animation ────────────────────────────────────────────────────────
 
@@ -256,7 +367,7 @@ class LcdDisplay(QWidget):
         if width > self._feature_cols():
             self._feature_offset = (self._feature_offset + 1) % (width + GAP)
         width = QFontMetrics(self._ticker_font).horizontalAdvance(self._message)
-        if width > self._ticker_cols():
+        if width > self._ticker_width():
             self._offset = (self._offset + 1) % (width + GAP)
         self.update()
 
@@ -274,7 +385,7 @@ class LcdDisplay(QWidget):
         top_h = rows // 2
         p.setPen(lit)
         # Feature line (the artist), then the busy lamp and clock at its right.
-        self._marquee(p, QRect(2, 0, self._feature_cols(), top_h), self._feature_font,
+        self._marquee(p, QRect(self._text_left(), 0, self._feature_cols(), top_h), self._feature_font,
                       self._feature, self._feature_offset)
         p.setFont(self._small_font)
         clock = self._clock_text()
@@ -290,7 +401,7 @@ class LcdDisplay(QWidget):
 
         # Ticker on the bottom line (the song, or a status message), left of the meter.
         p.setPen(lit)
-        self._marquee(p, QRect(2, top_h, self._ticker_cols(), rows - top_h), self._ticker_font,
+        self._marquee(p, QRect(self._text_left(), top_h, self._ticker_width(), rows - top_h), self._ticker_font,
                       self._message, self._offset)
 
         # Level meter: each row of dots is one segment, coloured by height.
@@ -347,11 +458,12 @@ class LcdDisplay(QWidget):
         screen_bg.setColorAt(0, QColor(skin.screen[0]))
         screen_bg.setColorAt(1, QColor(skin.screen[1]))
         p.fillPath(glass, screen_bg)
-        scene = {"bliss": _paint_bliss, "lightning": _paint_lightning}.get(skin.scene)
+        scene = {"bliss": _paint_bliss, "lightning": _paint_lightning, "halo": _paint_halo,
+                 "bubbles": _paint_bubbles}.get(skin.scene)
         if scene is not None:
             p.save()
             p.setClipPath(glass)
-            scene(p, glass.boundingRect())
+            scene(p, glass.boundingRect(), time.monotonic())
             p.restore()
 
         cols, rows = self._grid()

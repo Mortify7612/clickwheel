@@ -21,8 +21,13 @@ THEME_FAMILIES = {
     "bliss": ["Tahoma", "Verdana", "DejaVu Sans", "Bitstream Vera Sans"],
     # Mac OS X's Lucida Grande; Go is by Bigelow & Holmes, Lucida's designers.
     "aqua": ["Lucida Grande", "Lucida Sans Unicode", "Go"],
+    # Halo's menus use Conduit ITC; Rajdhani is a free, similarly squared-off sci-fi face.
+    "halo": ["Rajdhani"],
 }
+# Faces that read small at the shared point sizes get scaled up a little.
+THEME_SCALE = {"halo": 1.18}
 _families = [MONO_FAMILY]
+_scale = 1.0
 _loaded = False
 
 
@@ -38,19 +43,21 @@ def load_fonts() -> None:
 
 def use_theme_fonts(theme: str) -> None:
     """Make :func:`ui_font` use ``theme``'s typeface (the system theme keeps the default)."""
-    global _families
+    global _families, _scale
     _families = THEME_FAMILIES.get(theme, [MONO_FAMILY])
+    _scale = THEME_SCALE.get(theme, 1.0)
 
 
-def ui_families() -> tuple[str, ...]:
-    return tuple(_families)
+def ui_font_key() -> tuple:
+    """Changes whenever the theme's typeface or size does (for caching fonts)."""
+    return (*_families, _scale)
 
 
 def ui_font(point_size: float = 9.5, weight: QFont.Weight = QFont.Normal) -> QFont:
     font = QFont()
     font.setFamilies(_families)
     font.setStyleHint(QFont.Monospace if _families[0] == MONO_FAMILY else QFont.SansSerif)
-    font.setPointSizeF(point_size)
+    font.setPointSizeF(point_size * _scale)
     font.setWeight(weight)
     return font
 

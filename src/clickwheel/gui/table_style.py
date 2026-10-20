@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPalette
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QStyle, QStyledItemDelegate, QTableWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView, QApplication, QHeaderView, QStyle, QStyledItemDelegate, QTableWidget,
+)
 
-from .fonts import label_font, mono_font, ui_families, ui_font
+from .fonts import label_font, mono_font, ui_font, ui_font_key
 from .ribbon import paint_ribs
-from .theme import is_retro
+from .theme import current_theme, is_retro
 
 TITLE, TEXT, MUTED, NUMBER = "title", "text", "muted", "number"
 SECTION = Qt.UserRole + 40  # truthy on a group header row (span it across the table)
@@ -23,6 +25,21 @@ SECTION_HEIGHT = 32
 COVER = 36
 # Retro skin: phosphor greens, brightest for titles, dimmer for supporting text.
 RETRO_TIERS = {TITLE: QColor("#5dff96"), TEXT: QColor("#2fd36c"), MUTED: QColor("#1d9a4c"), NUMBER: QColor("#1d9a4c")}
+
+
+def _tint(color: QColor, alpha: int) -> QColor:
+    return QColor(color.red(), color.green(), color.blue(), alpha)
+
+
+def _base(pal: QPalette) -> tuple[QColor, bool]:
+    """The row background colour, and whether rows are glass (see-through).
+
+    A stylesheet giving a view a see-through background leaves the view's Base as "no brush",
+    whose colour reads as black; the theme's own Base is then the colour to mix with.
+    """
+    brush = pal.brush(QPalette.Base)
+    base = pal.color(QPalette.Base) if brush.style() != Qt.NoBrush else QApplication.palette().color(QPalette.Base)
+    return base, brush.style() == Qt.NoBrush or base.alpha() < 255
 
 
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
@@ -39,7 +56,7 @@ class TrackDelegate(QStyledItemDelegate):
 
     def _fonts(self, retro: bool) -> None:
         """(Re)build the cell fonts when the theme's typeface changes."""
-        key = (ui_families(), retro)
+        key = (ui_font_key(), retro)
         if key == self._fonts_for:
             return
         self._fonts_for = key
@@ -78,7 +95,7 @@ class TrackDelegate(QStyledItemDelegate):
             self._paint_section(p, option, index)
             return
         pal = option.palette
-        base, text = pal.color(QPalette.Base), pal.color(QPalette.Text)
+        (base, glass), text = _base(pal), pal.color(QPalette.Text)
         rect = option.rect
         selected = bool(option.state & QStyle.State_Selected)
         hovered = bool(option.state & QStyle.State_MouseOver)
@@ -87,21 +104,30 @@ class TrackDelegate(QStyledItemDelegate):
         p.setRenderHint(QPainter.Antialiasing)
 
         # Row background: soft bands (+ faint scanlines in retro), rounded hover / selection bars.
-        p.fillRect(rect, _mix(base, text, 0.035) if index.row() % 2 else base)
+        # Glass rows get translucent bands over whatever is behind.
+        if glass:
+            if index.row() % 2:
+                p.fillRect(rect, _tint(text, 9))
+        else:
+            p.fillRect(rect, _mix(base, text, 0.035) if index.row() % 2 else base)
         if retro:
             p.setPen(QColor(57, 255, 122, 7))
             for y in range(rect.top() + 1, rect.bottom(), 3):
                 p.drawLine(rect.left(), y, rect.right(), y)
-        if selected:
-            hi = pal.color(QPalette.Highlight)
+        if selected and current_theme() == "y2k":
+            self._paint_candy(p, option, rect, first, last)
+        elif selected:
+            # Glass skins blank the view's own square selection (it would show round the
+            # bar), so take the highlight from the theme instead.
+            hi = QApplication.palette().color(QPalette.Highlight) if glass else pal.color(QPalette.Highlight)
             grad = QLinearGradient(rect.topLeft(), rect.bottomLeft())
             grad.setColorAt(0, hi.lighter(125))
             grad.setColorAt(1, hi.darker(110))
             p.fillPath(self._pill(rect, first, last), grad)
         elif hovered:
-            p.fillPath(self._pill(rect, first, last), QColor(text.red(), text.green(), text.blue(), 20))
+            p.fillPath(self._pill(rect, first, last), _tint(text, 20))
         if not selected:
-            p.setPen(_mix(base, text, 0.07))
+            p.setPen(_tint(text, 18) if glass else _mix(base, text, 0.07))
             p.drawLine(rect.bottomLeft(), rect.bottomRight())
 
         # Foreground: now-playing / status colours win, then the column's tier.
@@ -147,21 +173,38 @@ class TrackDelegate(QStyledItemDelegate):
         p.restore()
 
 
+    def _paint_candy(self, p, option, rect: QRect, first: bool, last: bool) -> None:
+        """Y2K selection: one pink-lilac-blue candy bar across the whole row, with a gloss on top."""
+        width = option.widget.viewport().width() if option.widget is not None else rect.width()
+        pill = self._pill(rect, first, last, 12)
+        candy = QLinearGradient(0, 0, width, 0)
+        candy.setColorAt(0, QColor("#ff8fcf"))
+        candy.setColorAt(0.5, QColor("#b79cff"))
+        candy.setColorAt(1, QColor("#6fc6ff"))
+        p.fillPath(pill, candy)
+        bar = pill.boundingRect()
+        shine = QLinearGradient(bar.topLeft(), bar.bottomLeft())
+        shine.setColorAt(0, QColor(255, 255, 255, 150))
+        shine.setColorAt(0.48, QColor(255, 255, 255, 40))
+        shine.setColorAt(0.52, QColor(255, 255, 255, 0))
+        p.fillPath(pill, shine)
+
     @staticmethod
     def _paint_section(p, option, index) -> None:
         """A group header: a soft band with a small caps label in the accent colour
         (retro: the label trailed by Winamp's gold ribs)."""
         pal = option.palette
-        base, text = pal.color(QPalette.Base), pal.color(QPalette.Text)
+        (base, glass), text = _base(pal), pal.color(QPalette.Text)
         rect = option.rect
         p.save()
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(rect, base)
+        if not glass:
+            p.fillRect(rect, base)
         retro = is_retro()
         if not retro:
             band = QPainterPath()
             band.addRoundedRect(QRectF(rect).adjusted(4, 4, -4, -2), 7, 7)
-            p.fillPath(band, _mix(base, text, 0.07))
+            p.fillPath(band, _tint(text, 18) if glass else _mix(base, text, 0.07))
         font = label_font(8)
         p.setFont(font)
         p.setPen(pal.color(QPalette.Link))

@@ -1,15 +1,16 @@
-"""Winamp-style gold ribbed bars for the retro skin: the window title strip and section headings."""
+"""Theme flourishes for headings: Winamp-style gold ribbed bars (retro), sparkles (Y2K)."""
 
 from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QEvent, QPointF, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QLabel, QWidget
 
 from .fonts import label_font
-from .theme import is_retro
+from .sparkle import paint_sparkle
+from .theme import current_theme, is_retro
 
 RIB_LIGHT = QColor("#f2d469")
 RIB_DARK = QColor("#5e4a12")
@@ -48,7 +49,15 @@ class TitleBar(QWidget):
 
 
 class SectionLabel(QLabel):
-    """A panel heading. Retro skin: caps text trailed by gold ribs; other skins: the plain label."""
+    """A panel heading. Retro skin: caps text trailed by gold ribs; Y2K: a twinkling sparkle
+    before it; other skins: the plain label."""
+
+    SPARKLE_ROOM = 18
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.StyleChange:  # the theme changed
+            self.setIndent(self.SPARKLE_ROOM if current_theme() == "y2k" else -1)
 
     def sizeHint(self) -> QSize:
         hint = super().sizeHint()
@@ -58,6 +67,12 @@ class SectionLabel(QLabel):
         return QSize(20, max(super().minimumSizeHint().height(), 18))
 
     def paintEvent(self, event) -> None:
+        if current_theme() == "y2k":
+            super().paintEvent(event)
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing)
+            paint_sparkle(p, QPointF(8, self.height() / 2), 6.5, QColor(255, 95, 180, 220))
+            return
         if not is_retro():
             super().paintEvent(event)
             return
