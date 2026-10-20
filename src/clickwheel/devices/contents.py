@@ -2,7 +2,38 @@
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class ArtworkRef:
+    """One cover image inside an Apple-firmware iPod's .ithmb files."""
+
+    path: str
+    offset: int
+    size: int
+    width: int
+    height: int
+    format_id: int
+    hpad: int = 0
+    vpad: int = 0
+
+    def load_png(self) -> bytes | None:
+        from pypodlib.artworkdb_writer.ithmb_codecs import decode_pixels_for_format
+
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(self.offset)
+                pixels = fh.read(self.size)
+            image = decode_pixels_for_format(self.format_id, pixels, self.width, self.height, self.hpad, self.vpad)
+        except Exception:
+            return None
+        if image is None:
+            return None
+        out = io.BytesIO()
+        image.save(out, "PNG")
+        return out.getvalue()
 
 
 @dataclass
@@ -14,6 +45,9 @@ class DeviceTrack:
     duration: int = 0  # seconds
     play_count: int = 0
     location: str = ""
+    # Apple firmware keeps art in ArtworkDB (pyPodLib strips it from the copied
+    # files); Rockbox reads art embedded in the file at ``location``.
+    artwork: ArtworkRef | None = None
 
 
 @dataclass

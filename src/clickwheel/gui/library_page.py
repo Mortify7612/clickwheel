@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
+from pathlib import Path
+
+from PySide6.QtCore import QSize, QUrl
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -11,8 +13,10 @@ from PySide6.QtWidgets import (
 
 from ..library import Library
 from . import workers
+from .artwork import THUMB, ArtPanel, CoverCache, album_key
 
 ALL = "__all__"
+ART_KEY, ART_PATH = 257, 258  # item data roles on the Title cell
 
 
 class LibraryPage(QWidget):
@@ -20,6 +24,9 @@ class LibraryPage(QWidget):
         super().__init__()
         self.library = library
         self.manager = manager
+        self.covers = CoverCache(self)
+        self.covers.loaded.connect(self._on_cover)
+        self._art_items: dict[str, list[QTableWidgetItem]] = {}
 
         self.lists = QListWidget()
         self.lists.currentItemChanged.connect(lambda *_: self._show_tracks())
@@ -45,6 +52,9 @@ class LibraryPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSortingEnabled(True)
+        self.table.setIconSize(QSize(THUMB, THUMB))
+        self.table.verticalHeader().setDefaultSectionSize(THUMB + 6)
+        self.table.currentCellChanged.connect(lambda row, *_: self._show_selected(row))
         hh = self.table.horizontalHeader()
         for col in (1, 2, 3):
             hh.setSectionResizeMode(col, QHeaderView.Stretch)
@@ -64,10 +74,12 @@ class LibraryPage(QWidget):
         row.addWidget(delete_btn)
         rv.addLayout(row)
 
+        self.art = ArtPanel(self.covers)
         split = QSplitter()
         split.addWidget(left)
         split.addWidget(right)
-        split.setSizes([260, 740])
+        split.addWidget(self.art)
+        split.setSizes([240, 640, 250])
         QVBoxLayout(self).addWidget(split)
 
         manager.library_changed.connect(self.refresh)
@@ -103,6 +115,7 @@ class LibraryPage(QWidget):
         self.remove_list_btn.setEnabled(pid != ALL)
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(tracks))
+        self._art_items = {}
         for row, t in enumerate(tracks):
             num = QTableWidgetItem()
             num.setData(0, t.track_number or None)
@@ -110,10 +123,31 @@ class LibraryPage(QWidget):
             self.table.setItem(row, 0, num)
             for col, text in enumerate([t.title, t.artist, t.album, t.year], start=1):
                 self.table.setItem(row, col, QTableWidgetItem(text))
+            key = album_key(t.album_artist, t.album)
+            title = self.table.item(row, 1)
+            title.setData(ART_KEY, key)
+            title.setData(ART_PATH, str(self.library.root / t.relpath))
+            title.setIcon(QIcon(self.covers.thumb(key)))
+            self._art_items.setdefault(key, []).append(title)
+            self.covers.request(key, self.library.root / t.relpath)
         self.table.setSortingEnabled(pid == ALL)
+        self._show_selected(self.table.currentRow())
         minutes = sum(t.duration for t in tracks) // 60
         self.summary.setText(f"{len(tracks)} songs · {minutes // 60} h {minutes % 60} min")
         self._apply_filter(self.filter.text())
+
+    def _on_cover(self, key: str) -> None:
+        icon = QIcon(self.covers.thumb(key))
+        for item in self._art_items.get(key, []):
+            item.setIcon(icon)
+
+    def _show_selected(self, row: int) -> None:
+        title = self.table.item(row, 1) if row >= 0 else None
+        if title is None:
+            self.art.show_track(None)
+            return
+        self.art.show_track(title.data(ART_KEY), title.text(), self.table.item(row, 2).text(),
+                            self.table.item(row, 3).text(), Path(title.data(ART_PATH)))
 
     def _apply_filter(self, text: str) -> None:
         needle = text.casefold()

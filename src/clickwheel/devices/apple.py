@@ -20,7 +20,7 @@ from pypodlib.sync import playlist_parser
 from pypodlib.sync.sync_executor import SyncExecutor
 
 from . import itunessd
-from .contents import DeviceContents, DevicePlaylist, DeviceTrack
+from .contents import ArtworkRef, DeviceContents, DevicePlaylist, DeviceTrack
 
 ProgressFn = Callable[[str, int, int], None]
 
@@ -263,6 +263,7 @@ class AppleSync:
         if not resolve_itdb_path(self.ipod.path):
             return DeviceContents([], [])
         lib = self.ipod.library(reload=True)
+        art = self._artwork_refs()
         tracks, index_by_dbid = [], {}
         for t in lib.tracks:
             index_by_dbid[t.db_track_id] = len(tracks)
@@ -270,9 +271,38 @@ class AppleSync:
                 title=t.title, artist=t.artist, album=t.album, track_number=t.track_number,
                 duration=int(t.duration), play_count=t.play_count,
                 location=(t.location or "").replace(":", "/"),
+                artwork=art.get(t.db_track_id),
             ))
         playlists = [
             DevicePlaylist(p.name, [index_by_dbid[i] for i in p.track_ids if i in index_by_dbid])
             for p in lib.playlists if not p.master
         ]
         return DeviceContents(tracks, playlists)
+
+    def _artwork_refs(self) -> dict[int, ArtworkRef]:
+        """Largest cover per track, keyed by db_track_id (ArtworkDB ``songId``)."""
+        from pypodlib.artworkdb_parser.parser import parse_artworkdb
+
+        art_dir = Path(self.ipod.path) / "iPod_Control" / "Artwork"
+        try:
+            db = parse_artworkdb(str(art_dir / "ArtworkDB"))
+        except Exception:
+            return {}
+        refs: dict[int, ArtworkRef] = {}
+        for entry in db.get("mhli", []):
+            song_id = int(entry.get("songId") or 0)
+            best = None
+            for container in entry.get("_image_containers", []):
+                r = (container.get("Thumbnail Image") or {}).get("result") or {}
+                name = ((r.get(3) or {}).get("File Name") or "").lstrip(":")
+                if not name or not r.get("imgSize"):
+                    continue
+                ref = ArtworkRef(str(art_dir / name.replace(":", "/")), int(r.get("ithmbOffset") or 0),
+                                 int(r["imgSize"]), int(r.get("imageWidth") or 0), int(r.get("imageHeight") or 0),
+                                 int(r.get("correlationID") or 0), int(r.get("horizontalPadding") or 0),
+                                 int(r.get("verticalPadding") or 0))
+                if best is None or ref.width * ref.height > best.width * best.height:
+                    best = ref
+            if song_id and best:
+                refs[song_id] = best
+        return refs

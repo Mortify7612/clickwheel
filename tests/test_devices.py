@@ -151,3 +151,21 @@ def test_progress_descriptions():
     assert _describe_progress(ev(NS(stage="execute_files", current_item=None, message=""))) == "Working"
     assert _describe_progress(ev(("scan_pc", 1, 2, "01 A.m4a"), "01 A.m4a")) == "Scanning library · 01 A.m4a"
     assert _describe_progress(ev(("diff", 0, 0, "Computing"), "Computing differences")) == "Computing differences"
+
+
+def test_browse_reads_cover_art(library, tmp_path):
+    from clickwheel.gui.artwork import embedded_art
+
+    dev = _virtual(tmp_path, "MC297")
+    dev.backend().sync(library.root)
+    contents = dev.backend().browse()
+    assert all(t.artwork is not None for t in contents.tracks)
+    png = contents.tracks[0].artwork.load_png()
+    assert png and png[:8] == b"\x89PNG\r\n\x1a\n"
+
+    mount = tmp_path / "rockbox"
+    (mount / ".rockbox").mkdir(parents=True)
+    rb = identify(mount).backend()
+    rb.sync(library.root)
+    first = rb.browse().tracks[0]
+    assert first.artwork is None and embedded_art(mount / first.location.lstrip("/"))
