@@ -144,34 +144,39 @@ def album_key(album_artist: str, album: str) -> str:
 
 
 class ArtPanel(QWidget):
-    """Large cover plus title / artist / album for the selected song."""
+    """Large cover plus title / artist / album for the selected song.
+
+    The cover shrinks to whatever room is left above the caption, so the two
+    never overlap in short panels (like the iPod tab).
+    """
 
     def __init__(self, cache: CoverCache, parent=None):
         super().__init__(parent)
         self.cache = cache
         self._key: str | None = None
+        self._pixmap = placeholder("", LARGE)
         self.cover = QLabel()
-        self.cover.setFixedSize(LARGE, LARGE)
+        self.cover.setAlignment(Qt.AlignCenter)
         self.title = QLabel()
-        self.title.setWordWrap(True)
         font = self.title.font()
-        font.setPointSizeF(font.pointSizeF() * 1.25)
+        font.setPointSizeF(font.pointSizeF() * 1.2)
         font.setBold(True)
         self.title.setFont(font)
         self.artist = QLabel()
         self.album = QLabel()
-        for label in (self.artist, self.album):
-            label.setWordWrap(True)
         self.album.setStyleSheet("color: palette(placeholder-text);")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 0, 0, 0)
-        layout.addWidget(self.cover)
-        layout.addSpacing(6)
-        layout.addWidget(self.title)
-        layout.addWidget(self.artist)
-        layout.addWidget(self.album)
+        layout.setSpacing(2)
+        layout.addWidget(self.cover, 0, Qt.AlignHCenter)
+        layout.addSpacing(8)
+        for label in (self.title, self.artist, self.album):
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+            layout.addWidget(label)
         layout.addStretch(1)
         self.setFixedWidth(LARGE + 8)
+        self.setMinimumHeight(120)
         cache.loaded.connect(self._on_loaded)
         self.show_track(None)
 
@@ -181,13 +186,32 @@ class ArtPanel(QWidget):
         self.title.setText(title or ("" if key else "Nothing selected"))
         self.artist.setText(artist)
         self.album.setText(album)
+        self.artist.setVisible(bool(artist))
+        self.album.setVisible(bool(album))
         if key is None:
-            self.cover.setPixmap(placeholder("", LARGE))
+            self._set_pixmap(placeholder("", LARGE))
             return
         if path is not None:
             self.cache.request(key, path)
-        self.cover.setPixmap(self.cache.large(key))
+        self._set_pixmap(self.cache.large(key))
 
     def _on_loaded(self, key: str) -> None:
         if key == self._key:
-            self.cover.setPixmap(self.cache.large(key))
+            self._set_pixmap(self.cache.large(key))
+
+    def _set_pixmap(self, pixmap: QPixmap) -> None:
+        self._pixmap = pixmap
+        self._fit_cover()
+
+    def _fit_cover(self) -> None:
+        width = self.width() - 8
+        caption = sum(label.sizeHint().height() for label in (self.title, self.artist, self.album)
+                      if label.isVisible()) + 24
+        side = max(48, min(LARGE, width, self.height() - caption))
+        self.cover.setFixedSize(side, side)
+        self.cover.setPixmap(self._pixmap if side == self._pixmap.width()
+                             else self._pixmap.scaled(side, side, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_cover()
