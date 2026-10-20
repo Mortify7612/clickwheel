@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton,
@@ -24,6 +24,9 @@ def _gb(n: int) -> str:
 
 
 class DevicePage(QWidget):
+    busy = Signal(bool)      # a sync started / finished
+    activity = Signal(str)   # current sync phase, for the LCD display
+
     def __init__(self, library: Library, settings: Settings):
         super().__init__()
         self.library = library
@@ -267,6 +270,8 @@ class DevicePage(QWidget):
             return
 
         self._syncing = True
+        self.busy.emit(True)
+        self.activity.emit(title)
         self.browser.set_busy(True)
         self._cancel.clear()
         self.sync_btn.setText("Cancel")
@@ -293,6 +298,8 @@ class DevicePage(QWidget):
             self.progress.setFormat(msg)
         # Per-song detail goes on the progress bar; the log gets one line per phase.
         phase = msg.split(" · ", 1)[0]
+        if msg:
+            self.activity.emit(msg)
         if phase and phase != self._phase:
             self._phase = phase
             self._log(phase)
@@ -304,6 +311,7 @@ class DevicePage(QWidget):
 
     def _finish(self) -> None:
         self._syncing = False
+        self.busy.emit(False)
         self.browser.set_busy(False)
         self.sync_btn.setText("Sync")
         self.sync_btn.setEnabled(True)

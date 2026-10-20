@@ -7,7 +7,7 @@ import sys
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
+    QApplication, QCheckBox, QComboBox, QVBoxLayout, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QSpinBox, QTabWidget, QWidget,
 )
 
@@ -15,7 +15,9 @@ from .._version import __version__
 from ..config import APP_NAME, DB_FILE, Settings
 from ..library import Library
 from .device_page import DevicePage
+from .lcd import LcdDisplay
 from .library_page import LibraryPage
+from .theme import THEMES, apply_theme
 from .update_dialog import check_for_updates
 from .workers import DownloadManager
 from .ytm_page import YtmPage
@@ -44,6 +46,11 @@ class SettingsDialog(QDialog):
         self.rockbox_files = QCheckBox("Sync Rockbox iPods as plain files (instead of the Apple database)")
         self.rockbox_files.setChecked(settings.rockbox_prefers_files)
         form.addRow(self.rockbox_files)
+        self.theme = QComboBox()
+        for key, label in THEMES.items():
+            self.theme.addItem(label, key)
+        self.theme.setCurrentIndex(max(0, self.theme.findData(settings.theme)))
+        form.addRow("Theme", self.theme)
         self.auto_update = QCheckBox("Check for Clickwheel updates once a day")
         self.auto_update.setChecked(settings.check_for_updates)
         form.addRow(self.auto_update)
@@ -69,6 +76,8 @@ class SettingsDialog(QDialog):
         self.settings.prefer_album_versions = self.album_versions.isChecked()
         self.settings.rockbox_prefers_files = self.rockbox_files.isChecked()
         self.settings.check_for_updates = self.auto_update.isChecked()
+        self.settings.theme = self.theme.currentData()
+        apply_theme(QApplication.instance(), self.settings.theme)
         self.settings.parallel_downloads = self.parallel.value()
         self.settings.cover_size = self.cover.value()
         self.settings.save()
@@ -100,7 +109,17 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.library_page, "Library")
         tabs.addTab(self.device_page, "iPod")
         tabs.currentChanged.connect(lambda i: i == 2 and self.device_page.refresh_choices())
-        self.setCentralWidget(tabs)
+        # Retro LCD strip above the tabs: status ticker plus a level meter while busy.
+        self.lcd = LcdDisplay()
+        central = QWidget()
+        column = QVBoxLayout(central)
+        column.setContentsMargins(6, 4, 6, 0)
+        column.setSpacing(4)
+        column.addWidget(self.lcd)
+        column.addWidget(tabs, 1)
+        self.setCentralWidget(central)
+        self._tabs = tabs
+        self._wire_lcd(status)
 
         def sync_songs(paths):
             tabs.setCurrentWidget(self.device_page)  # show progress where syncs live
@@ -128,6 +147,24 @@ class MainWindow(QMainWindow):
         status.showMessage(f"Library: {self.library.root}")
         QTimer.singleShot(3000, lambda: check_for_updates(self, self.settings, manual=False))
 
+    def _wire_lcd(self, status) -> None:
+        lcd = self.lcd
+        status.messageChanged.connect(lambda text: lcd.set_message(text or "Ready"))
+        self.manager.resolving.connect(lambda label: (lcd.set_busy("downloads", True),
+                                                      lcd.set_message(f"Looking up {label}")))
+        self.manager.idle.connect(lambda: lcd.set_busy("downloads", False))
+
+        def on_track(ev):
+            from ..pipeline import Status
+
+            if ev.status == Status.DOWNLOADING:
+                pct = f" {ev.progress:.0%}" if ev.progress else ""
+                lcd.set_message(f"{ev.meta.artist} - {ev.meta.title}{pct}")
+
+        self.manager.track_event.connect(on_track)
+        self.device_page.busy.connect(lambda busy: lcd.set_busy("sync", busy))
+        self.device_page.activity.connect(lcd.set_message)
+
     def closeEvent(self, event) -> None:
         # Sync and edit threads die with the process: quitting mid-write can leave a
         # database without its iTunesSD (a Shuffle then plays almost nothing).
@@ -153,6 +190,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName("clickwheel")
+    apply_theme(app, Settings.load().theme)
     window = MainWindow()
     window.show()
     return app.exec()

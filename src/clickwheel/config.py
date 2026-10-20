@@ -31,6 +31,7 @@ class Settings:
     # Rockbox devices: mirror files instead of writing the Apple database.
     rockbox_prefers_files: bool = True
     check_for_updates: bool = True
+    theme: str = "retro"  # "retro" | "system"
     last_update_check: float = 0.0
 
     @classmethod
