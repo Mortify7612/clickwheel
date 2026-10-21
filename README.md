@@ -30,6 +30,13 @@ Download the latest build from [Releases](https://github.com/Mortify7612/clickwh
 `Clickwheel-windows-x64-setup.exe` (Windows), the `.dmg` for your Mac (Apple Silicon or Intel), or
 `Clickwheel-linux-x86_64.AppImage` (Linux).
 
+The Mac and Windows apps include everything they need, ffmpeg and ffprobe among them; the Linux
+builds use the distribution's `ffmpeg`. The bundled ffmpeg is GPL software (license in the app's
+`licenses` folder): the Mac builds are compiled by `packaging/build-ffmpeg-macos.sh` from the
+FFmpeg, LAME and x264 sources it names, and the Windows builds use
+[Gyan Doshi's release](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2), whose source is
+linked from its README.
+
 GitHub Actions builds the installers, plus the `.zip`/`.tar.gz`/`.dmg` packages the updater uses. Starting the **Build** workflow from the Actions tab produces test builds (artifacts on the
 run page). Tests alone run on every push.
 
