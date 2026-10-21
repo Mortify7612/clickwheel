@@ -58,7 +58,8 @@ tar xf ffmpeg.tar.xz
         --enable-zlib --enable-bzlib --enable-iconv \
         --disable-ffplay --disable-doc --disable-debug \
         --pkg-config-flags=--static \
-        --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib"
+        --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib" \
+        --extra-libs=-liconv  # iconv is its own library on macOS, not part of libc
     make -j"$JOBS"
     cp ffmpeg ffprobe "$OUT/"
     cp COPYING.GPLv2 "$OUT/LICENSE-ffmpeg.txt"
