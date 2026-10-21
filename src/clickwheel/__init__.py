@@ -28,10 +28,10 @@ def cli(argv: list[str]) -> int:
     dl = sub.add_parser("download", help="download a playlist/album/song link")
     dl.add_argument("url", nargs="+")
     dl.add_argument("--account", help="account to use (default: the active one)")
-    sub.add_parser("devices", help="list connected iPods")
+    sub.add_parser("devices", help="list connected iPods (and a Zune HD)")
     sub.add_parser("install-desktop", help="Linux: add Clickwheel (with its icon) to your app launcher")
     sync = sub.add_parser("sync", help="sync the library to an iPod")
-    sync.add_argument("--device", help="mount path (default: first detected)")
+    sync.add_argument("--device", help='mount path, or "zune" (default: first detected)')
     args = parser.parse_args(argv)
 
     settings = Settings.load()
@@ -94,16 +94,20 @@ def cli(argv: list[str]) -> int:
         for path in install_desktop_entry():
             print("wrote", path)
     elif args.cmd == "devices":
-        from .devices import scan
+        from .devices import scan, scan_zune
 
-        for dev in scan():
-            print(dev.label)
+        for dev in [*scan(), scan_zune()]:
+            if dev is not None:
+                print(dev.label)
     elif args.cmd == "sync":
         from pathlib import Path
 
-        from .devices import identify, scan
+        from .devices import identify, scan, scan_zune
 
-        dev = identify(Path(args.device)) if args.device else next(iter(scan()), None)
+        if args.device == "zune":
+            dev = scan_zune()
+        else:
+            dev = identify(Path(args.device)) if args.device else next(iter(scan()), None)
         if dev is None:
             print("No iPod found.", file=sys.stderr)
             return 1

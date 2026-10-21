@@ -1,4 +1,4 @@
-"""Connected-iPod discovery and the sync backend for each one."""
+"""Connected-device discovery (iPods, Rockbox players, a Zune HD) and the sync backend for each one."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,12 +18,15 @@ class Device:
     path: Path
     name: str
     model: str
-    firmware: str  # "apple" | "rockbox"
+    firmware: str  # "apple" | "rockbox" | "zune"
     has_apple_db: bool
     ipod: object | None = None  # pypodlib.IPod when the Apple layout is present
+    zune: object | None = None  # zune.ZuneInfo for a Zune HD (an MTP device: ``path`` is only an identifier)
 
     @property
     def label(self) -> str:
+        if self.zune is not None:
+            return f"{self.name} — {self.model}" + (" (in use by another program)" if self.zune.busy else "")
         tag = " · Rockbox" if self.firmware == "rockbox" else ""
         return f"{self.name} — {self.model}{tag} ({self.path})"
 
@@ -33,6 +37,8 @@ class Device:
         return is_read_only(self.path)
 
     def free_space(self) -> tuple[int, int]:
+        if self.zune is not None:
+            return self.zune.free, self.zune.total
         usage = shutil.disk_usage(self.path)
         return usage.free, usage.total
 
@@ -41,6 +47,12 @@ class Device:
         return bool(self.ipod and getattr(self.ipod.capabilities, "is_shuffle", False))
 
     def backend(self, prefer_rockbox_files: bool = True):
+        if self.zune is not None:
+            from .zune import ZuneSync
+
+            if self.zune.busy:
+                raise RuntimeError("Another program is using the Zune. On KDE, release it from the iPod tab.")
+            return ZuneSync(self.zune)
         if self.firmware == "rockbox" and (prefer_rockbox_files or self.ipod is None):
             from .rockbox import RockboxSync
 
@@ -52,6 +64,8 @@ class Device:
         return AppleSync(self.ipod)
 
     def eject(self) -> str:
+        if self.zune is not None:
+            return "Safe to unplug"  # MTP: nothing is cached on this side
         from pypodlib.device.eject import eject_ipod
 
         ok, message = eject_ipod(str(self.path))
@@ -147,8 +161,41 @@ def mount_unmounted_ipods() -> list[str]:
     return mounted
 
 
+_zune_device: Device | None = None  # last seen Zune; probing it opens an MTP session
+ZUNE_STATUS_EVERY_S = 60
+
+
+def scan_zune() -> Device | None:
+    """The plugged-in Zune HD (Linux only), reusing what an earlier scan learned."""
+    global _zune_device
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        import usb.core
+
+        from . import zune
+    except ImportError:
+        return None
+    try:
+        present = usb.core.find(idVendor=zune.VENDOR, idProduct=zune.PRODUCT) is not None
+    except usb.core.NoBackendError:
+        return None
+    if not present:
+        _zune_device = None
+    elif _zune_device is None or _zune_device.zune.busy:
+        try:
+            info = zune.probe()
+        except Exception:
+            info = None
+        if info is not None:  # None also while a session is open: keep what we had
+            _zune_device = Device(Path(f"zune:{info.serial}"), info.name, "Zune HD", "zune", False, zune=info)
+    elif time.monotonic() - _zune_device.zune.checked > ZUNE_STATUS_EVERY_S:
+        zune.refresh(_zune_device.zune)  # battery and free space drift while it sits there
+    return _zune_device
+
+
 def scan() -> list[Device]:
-    """Find iPods on every mounted volume (works on Linux, macOS and Windows)."""
+    """Find iPods on every mounted volume (works on Linux, macOS and Windows). See ``scan_zune`` for a Zune."""
     mount_unmounted_ipods()
     found: dict[Path, Device] = {}
     for part in psutil.disk_partitions(all=False):

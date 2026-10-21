@@ -27,10 +27,11 @@ class DevicePage(QWidget):
     busy = Signal(bool)      # a sync started / finished
     activity = Signal(str)   # current sync phase, for the LCD display
 
-    def __init__(self, library: Library, settings: Settings):
+    def __init__(self, library: Library, settings: Settings, noun: str = "iPod"):
         super().__init__()
         self.library = library
         self.settings = settings
+        self.noun = noun  # what the user calls the device, in messages
         self.devices: list[Device] = []
         self._cancel = threading.Event()
         self._syncing = False
@@ -42,17 +43,17 @@ class DevicePage(QWidget):
         self.combo.currentIndexChanged.connect(self._show_device)
         rescan = QPushButton("Rescan")
         rescan.clicked.connect(self.rescan)
-        manual = QPushButton("Choose folder…")
-        manual.setToolTip("Point at an iPod's mount folder if it wasn't detected")
-        manual.clicked.connect(self._choose_folder)
+        self.manual_btn = QPushButton("Choose folder…")
+        self.manual_btn.setToolTip("Point at an iPod's mount folder if it wasn't detected")
+        self.manual_btn.clicked.connect(self._choose_folder)
         top = QHBoxLayout()
         top.addWidget(QLabel("Device"))
         top.addWidget(self.combo, 1)
         top.addWidget(rescan)
-        top.addWidget(manual)
+        top.addWidget(self.manual_btn)
 
         info = QGroupBox("Device")
-        form = QFormLayout(info)
+        form = self.info_form = QFormLayout(info)
         self.model = QLabel("—")
         self.firmware = QLabel("—")
         self.space = QLabel("—")
@@ -77,9 +78,9 @@ class DevicePage(QWidget):
         self.pick.setSelectionMode(QAbstractItemView.NoSelection)
         self.some_radio.toggled.connect(self.pick.setEnabled)
         self.pick.setEnabled(False)
-        mirror_note = QLabel("The iPod is made to match the selection: other songs Clickwheel synced are removed. "
-                             "To add songs without removing any, select them on the Library tab and use "
-                             "“Sync selected to iPod”.")
+        mirror_note = QLabel(f"The {noun} is made to match the selection: other songs Clickwheel synced are "
+                             "removed. To add songs without removing any, select them on the Library tab and use "
+                             f"“Sync selected to {noun}”.")
         mirror_note.setWordWrap(True)
         mirror_note.setStyleSheet("color: palette(placeholder-text);")
         wv.addWidget(self.all_radio)
@@ -109,10 +110,10 @@ class DevicePage(QWidget):
         cols.addWidget(what, 2)
         layout.addLayout(cols, 2)
         layout.addLayout(actions)
-        self.browser = DeviceBrowser(library)
+        self.browser = DeviceBrowser(library, noun)
         self.browser.editing.connect(self._on_editing)
         self.bottom = QTabWidget()
-        self.bottom.addTab(self.browser, "On this iPod")
+        self.bottom.addTab(self.browser, f"On this {noun}")
         self.bottom.addTab(self.log, "Sync log")
         layout.addWidget(self.bottom, 3)
 
@@ -126,7 +127,13 @@ class DevicePage(QWidget):
     # ── Devices ──────────────────────────────────────────────────────────
 
     def rescan(self) -> None:
-        workers.run(scan, on_done=self._set_devices, on_error=lambda m: self._log(f"Scan failed: {m}"))
+        workers.run(self._scan, on_done=self._set_devices, on_error=lambda m: self._log(f"Scan failed: {m}"))
+
+    def _scan(self) -> list[Device]:
+        return scan()
+
+    def _no_device_text(self) -> str:
+        return "No iPod found — plug one in, or choose its folder"
 
     def _poll(self) -> None:
         if not self._syncing and not self._editing and self.isVisible():
@@ -135,7 +142,8 @@ class DevicePage(QWidget):
     def _set_devices(self, devices: list[Device], keep: Path | None = None) -> None:
         manual = [d for d in self.devices if d.path not in {x.path for x in devices} and d.path.exists()]
         merged = devices + manual
-        if [d.path for d in merged] == [d.path for d in self.devices] and keep is None:
+        # Labels too: a device can keep its path but change state (a Zune another program let go of).
+        if [(d.path, d.label) for d in merged] == [(d.path, d.label) for d in self.devices] and keep is None:
             return
         current = keep or (self.current.path if self.current else None)
         self.devices = merged
@@ -147,7 +155,7 @@ class DevicePage(QWidget):
         self.combo.setCurrentIndex(idx)
         self.combo.blockSignals(False)
         if not self.devices:
-            self.combo.addItem("No iPod found — plug one in, or choose its folder")
+            self.combo.addItem(self._no_device_text())
         self._show_device()
 
     def _choose_folder(self) -> None:
@@ -181,17 +189,18 @@ class DevicePage(QWidget):
             self.model.setText("—")
             self.firmware.setText("—")
             self.space.setText("—")
+            self.ro_warning.hide()
             return
         self.model.setText(dev.model)
-        read_only = dev.read_only
-        self.ro_warning.setVisible(read_only)
-        if read_only:
-            self.ro_warning.setText(
-                "This iPod is mounted read-only — usually because the system found filesystem errors "
-                "(for example after it was unplugged without ejecting). Syncing and editing are off until "
-                "it's repaired: on Linux, eject it, then run  sudo fsck.vfat -a /dev/<device>  and plug it back in.")
+        warning = self._describe(dev)
+        self.ro_warning.setText(warning)
+        self.ro_warning.setVisible(bool(warning))
+        read_only = bool(warning)
         self.sync_btn.setEnabled(not read_only and not self._editing)
         self.browser.set_busy(read_only or self._syncing)
+
+    def _describe(self, dev: Device) -> str:
+        """Fill in the firmware and storage rows; returns why the device can't be changed, if it can't."""
         fw = "Rockbox" if dev.firmware == "rockbox" else "Apple"
         if dev.firmware == "rockbox" and dev.has_apple_db:
             fw += " (dual-boot; " + ("syncing files" if self.settings.rockbox_prefers_files else "syncing Apple DB") + ")"
@@ -203,6 +212,11 @@ class DevicePage(QWidget):
             self.space.setText(f"{_gb(free)} free of {_gb(total)}")
         except OSError:
             self.space.setText("unavailable")
+        if not dev.read_only:
+            return ""
+        return ("This iPod is mounted read-only — usually because the system found filesystem errors "
+                "(for example after it was unplugged without ejecting). Syncing and editing are off until "
+                "it's repaired: on Linux, eject it, then run  sudo fsck.vfat -a /dev/<device>  and plug it back in.")
 
     def refresh_choices(self) -> None:
         checked = {self.pick.item(i).data(Qt.UserRole) for i in range(self.pick.count())
@@ -252,11 +266,11 @@ class DevicePage(QWidget):
     def sync_songs(self, paths: list[Path]) -> None:
         """Add just these library files to the current device (nothing is removed)."""
         if self._syncing or self._editing:
-            QMessageBox.information(self, "iPod busy", "Wait for the current sync or edit to finish.")
+            QMessageBox.information(self, f"{self.noun} busy", "Wait for the current sync or edit to finish.")
             return
         dev = self.current
         if dev is None:
-            QMessageBox.information(self, "No iPod", "Plug in an iPod (or choose its folder on the iPod tab) first.")
+            QMessageBox.information(self, f"No {self.noun}", self._no_device_text() + ".")
             return
         n = len(paths)
         self._start_sync(dev, f"Adding {n} song{'s' if n != 1 else ''} to {dev.label}…",

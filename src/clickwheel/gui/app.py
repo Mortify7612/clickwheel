@@ -30,6 +30,7 @@ from .theme import THEMES, apply_theme, current_theme, is_retro
 from .update_dialog import check_for_updates
 from .workers import DownloadManager
 from .ytm_page import YtmPage
+from .zune_page import ZunePage
 
 
 ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "clickwheel.png"
@@ -121,13 +122,24 @@ class MainWindow(QMainWindow):
         # Edits on the iPod tab can also change the library (mirrored order, deletions).
         self.device_page.browser.library_edited.connect(self.library_page.refresh)
         self.device_page.browser.library_edited.connect(self.device_page.refresh_choices)
+        # The Zune HD gets its own tab (Linux only: it's reached over MTP through libusb).
+        self.zune_page = ZunePage(self.library, self.settings) if sys.platform.startswith("linux") else None
+        self.device_pages = [p for p in (self.device_page, self.zune_page) if p is not None]
+        if self.zune_page is not None:
+            self.manager.library_changed.connect(self.zune_page.refresh_choices)
+            self.zune_page.browser.library_edited.connect(self.library_page.refresh)
+            self.zune_page.browser.library_edited.connect(self.zune_page.refresh_choices)
+            self.zune_page.present.connect(self.library_page.set_zune_available)
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
         tabs.addTab(self.ytm_page, "YouTube Music")
         tabs.addTab(self.library_page, "Library")
         tabs.addTab(self.device_page, "iPod")
-        tabs.currentChanged.connect(lambda i: i == 2 and self.device_page.refresh_choices())
+        if self.zune_page is not None:
+            tabs.addTab(self.zune_page, "Zune")
+        tabs.currentChanged.connect(
+            lambda i: tabs.widget(i) in self.device_pages and tabs.widget(i).refresh_choices())
         # Retro LCD strip above the tabs: status ticker plus a level meter while busy.
         self.lcd = LcdDisplay()
         self.player = Player(BARS, self)
@@ -152,11 +164,13 @@ class MainWindow(QMainWindow):
         self.restyle()
         self._keep_playback()
 
-        def sync_songs(paths):
-            tabs.setCurrentWidget(self.device_page)  # show progress where syncs live
-            self.device_page.sync_songs(paths)
+        def sync_songs(page, paths):
+            tabs.setCurrentWidget(page)  # show progress where syncs live
+            page.sync_songs(paths)
 
-        self.library_page.sync_requested.connect(sync_songs)
+        self.library_page.sync_requested.connect(lambda paths: sync_songs(self.device_page, paths))
+        if self.zune_page is not None:
+            self.library_page.zune_sync_requested.connect(lambda paths: sync_songs(self.zune_page, paths))
 
         menu = self.menuBar().addMenu("&File")
         prefs = QAction("Settings…", self)
@@ -180,7 +194,7 @@ class MainWindow(QMainWindow):
 
     def restyle(self) -> None:
         """Theme-dependent touches a stylesheet can't express (uppercase tab labels, table fonts)."""
-        for tabs in (self._tabs, self.device_page.bottom):
+        for tabs in (self._tabs, *(p.bottom for p in self.device_pages)):
             # The stylesheet sets the tab font, so capitalise the labels themselves.
             for i in range(tabs.count()):
                 original = tabs.tabBar().tabData(i)
@@ -188,7 +202,7 @@ class MainWindow(QMainWindow):
                     original = tabs.tabText(i)
                     tabs.tabBar().setTabData(i, original)
                 tabs.setTabText(i, original.upper() if is_retro() else original)
-        for table in (self.library_page.table, self.device_page.browser.table, self.ytm_page.table):
+        for table in (self.library_page.table, self.ytm_page.table, *(p.browser.table for p in self.device_pages)):
             restyle_table(table)
         self.player_bar.refresh_icons()
         self.title_bar.setVisible(is_retro())
@@ -210,8 +224,9 @@ class MainWindow(QMainWindow):
                 lcd.set_message(f"{ev.meta.artist} - {ev.meta.title}{pct}")
 
         self.manager.track_event.connect(on_track)
-        self.device_page.busy.connect(lambda busy: lcd.set_busy("sync", busy))
-        self.device_page.activity.connect(lcd.set_message)
+        for page in self.device_pages:
+            page.busy.connect(lambda busy, page=page: lcd.set_busy(f"sync-{page.noun}", busy))
+            page.activity.connect(lcd.set_message)
 
         # Playback drives the ticker, clock and (real) spectrum meter.
         player = self.player
@@ -231,11 +246,11 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         # Sync and edit threads die with the process: quitting mid-write can leave a
         # database without its iTunesSD (a Shuffle then plays almost nothing).
-        page = self.device_page
-        if page._syncing or page._editing:
+        page = next((p for p in self.device_pages if p._syncing or p._editing), None)
+        if page is not None:
             answer = QMessageBox.warning(
-                self, "Clickwheel is writing to your iPod",
-                "Quitting now can leave the iPod's music list half-written. Wait for it to finish?",
+                self, f"Clickwheel is writing to your {page.noun}",
+                f"Quitting now can leave the {page.noun}'s music list half-written. Wait for it to finish?",
                 QMessageBox.Ok | QMessageBox.Discard, QMessageBox.Ok)
             if answer != QMessageBox.Discard:
                 event.ignore()

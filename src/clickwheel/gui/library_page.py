@@ -33,6 +33,7 @@ class SortKeyItem(QTableWidgetItem):
 
 class LibraryPage(QWidget):
     sync_requested = Signal(list)  # library file paths to add to the current iPod
+    zune_sync_requested = Signal(list)  # ... or to the Zune HD
     play_requested = Signal(list, int)  # PlayItems in view order, index to start at
 
     def __init__(self, library: Library, manager: workers.DownloadManager):
@@ -79,15 +80,24 @@ class LibraryPage(QWidget):
         self.sync_btn = QPushButton("Sync selected to iPod")
         self.sync_btn.setToolTip("Add the selected songs to the iPod without removing anything")
         self.sync_btn.clicked.connect(self._sync_selected)
-        self.table.itemSelectionChanged.connect(
-            lambda: self.sync_btn.setEnabled(bool(self.table.selectedIndexes())))
-        self.sync_btn.setEnabled(False)
+        self.zune_sync_btn = QPushButton("Sync selected to Zune")
+        self.zune_sync_btn.setToolTip("Add the selected songs to the Zune without removing anything")
+        self.zune_sync_btn.clicked.connect(lambda: self._emit_selected(self.zune_sync_requested))
+        self.zune_sync_btn.hide()  # until a Zune is plugged in
+        for btn in (self.sync_btn, self.zune_sync_btn):
+            self.table.itemSelectionChanged.connect(
+                lambda btn=btn: btn.setEnabled(bool(self.table.selectedIndexes())))
+            btn.setEnabled(False)
         self.table.doubleClicked.connect(lambda index: self._play_from(index.row()))
         for label, slot in (("Play", lambda: self._play_from(self.table.currentRow())),
-                            ("Sync to iPod", self._sync_selected), ("Delete from library…", self._delete_selected)):
+                            ("Sync to iPod", self._sync_selected),
+                            ("Sync to Zune", lambda: self._emit_selected(self.zune_sync_requested)),
+                            ("Delete from library…", self._delete_selected)):
             action = QAction(label, self.table)
             action.triggered.connect(slot)
             self.table.addAction(action)
+        self._zune_action = self.table.actions()[-2]
+        self._zune_action.setVisible(False)
         self.summary = QLabel()
         right = QWidget()
         rv = QVBoxLayout(right)
@@ -98,6 +108,7 @@ class LibraryPage(QWidget):
         row.addWidget(self.summary, 1)
         row.addWidget(open_btn)
         row.addWidget(self.sync_btn)
+        row.addWidget(self.zune_sync_btn)
         row.addWidget(delete_btn)
         rv.addLayout(row)
 
@@ -235,7 +246,14 @@ class LibraryPage(QWidget):
     def _now_playing_row(self) -> int:
         return next((r for r in range(self.table.rowCount()) if self._row_path(r) == self._now_path), -1)
 
+    def set_zune_available(self, available: bool) -> None:
+        self.zune_sync_btn.setVisible(available)
+        self._zune_action.setVisible(available)
+
     def _sync_selected(self) -> None:
+        self._emit_selected(self.sync_requested)
+
+    def _emit_selected(self, signal) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
         paths = []
         for row in rows:
@@ -243,7 +261,7 @@ class LibraryPage(QWidget):
             if track is not None:
                 paths.append(self.library.root / track.relpath)
         if paths:
-            self.sync_requested.emit(paths)
+            signal.emit(paths)
 
     def _delete_selected(self) -> None:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})

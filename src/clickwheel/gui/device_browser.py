@@ -25,10 +25,10 @@ def _length(seconds: int) -> str:
 
 
 class DeleteDialog(QDialog):
-    def __init__(self, count: int, in_library: int, parent=None):
+    def __init__(self, count: int, in_library: int, parent=None, noun: str = "iPod"):
         super().__init__(parent)
-        self.setWindowTitle("Delete from iPod")
-        text = QLabel(f"Delete {count} song{'s' if count != 1 else ''} from the iPod? "
+        self.setWindowTitle(f"Delete from {noun}")
+        text = QLabel(f"Delete {count} song{'s' if count != 1 else ''} from the {noun}? "
                       "They're removed from its database and the files are deleted.")
         text.setWordWrap(True)
         layout = QVBoxLayout(self)
@@ -51,9 +51,10 @@ class DeviceBrowser(QWidget):
     play_requested = Signal(list, int)  # PlayItems in view order, index to start at
     library_edited = Signal()    # the local library changed as a side effect
 
-    def __init__(self, library: Library | None = None):
+    def __init__(self, library: Library | None = None, noun: str = "iPod"):
         super().__init__()
         self.library = library
+        self.noun = noun
         self._contents = DeviceContents([], [])
         self._device = None
         self._backend = None
@@ -103,7 +104,7 @@ class DeviceBrowser(QWidget):
         self.save_btn.clicked.connect(self._save_order)
         self.revert_btn = QPushButton("Revert")
         self.revert_btn.clicked.connect(self._revert)
-        self.delete_btn = QPushButton("Delete from iPod…")
+        self.delete_btn = QPushButton(f"Delete from {noun}…")
         self.delete_btn.setToolTip("Delete key")
         self.delete_btn.clicked.connect(self._delete)
         QShortcut(QKeySequence("Ctrl+Up"), self.table, lambda: self._move(-1))
@@ -162,7 +163,7 @@ class DeviceBrowser(QWidget):
         workers.run(self._backend.browse, on_done=done, on_error=failed)
 
     def set_busy(self, busy: bool) -> None:
-        """Called by the iPod tab while a sync is writing to the device."""
+        """Called by the device tab while a sync is writing to the device."""
         self._busy = busy
         self._update_buttons()
 
@@ -224,11 +225,12 @@ class DeviceBrowser(QWidget):
         if not self._dirty:
             return True
         return QMessageBox.question(self, "Unsaved order",
-                                    "Discard the new song order without saving it to the iPod?") == QMessageBox.Yes
+                                    f"Discard the new song order without saving it to the {self.noun}?"
+                                    ) == QMessageBox.Yes
 
     def _render(self, note: str = "", select: list[int] | None = None) -> None:
         tracks = [self._contents.tracks[i] for i in self._view]
-        root = self._device.path if self._device is not None else None
+        root = self._files_root()
         self.table.setSortingEnabled(False)
         self.table.clearSelection()
         self.table.setRowCount(len(tracks))
@@ -317,7 +319,7 @@ class DeviceBrowser(QWidget):
         self._busy = True
         self.editing.emit(True)
         self._update_buttons()
-        self.summary.setText("Writing to the iPod…")
+        self.summary.setText(f"Writing to the {self.noun}…")
 
         def finished(result):
             self._busy = False
@@ -328,15 +330,22 @@ class DeviceBrowser(QWidget):
             self._busy = False
             self.editing.emit(False)
             self._update_buttons()
-            QMessageBox.critical(self, "Couldn't change the iPod", message)
+            QMessageBox.critical(self, f"Couldn't change the {self.noun}", message)
             self.load(self._device, self._prefer_rockbox_files)
 
         workers.run(fn, *args, on_done=finished, on_error=failed)
 
+    def _files_root(self):
+        """Where the device's files are, or None for an MTP player (a Zune) whose songs aren't files here."""
+        if self._device is None or getattr(self._device, "zune", None) is not None:
+            return None
+        return self._device.path
+
     def _play_from(self, row: int) -> None:
         from .player import PlayItem
 
-        if self._device is None or row < 0:
+        root = self._files_root()
+        if root is None or row < 0:
             return
         items, start = [], 0
         for r in range(self.table.rowCount()):
@@ -347,7 +356,7 @@ class DeviceBrowser(QWidget):
                 continue
             if r == row:
                 start = len(items)
-            items.append(PlayItem(self._device.path / t.location.lstrip("/"), t.title, t.artist, t.album))
+            items.append(PlayItem(root / t.location.lstrip("/"), t.title, t.artist, t.album))
         if items:
             self.play_requested.emit(items, start)
 
@@ -357,7 +366,7 @@ class DeviceBrowser(QWidget):
         tracks = [self._contents.tracks[i] for i in self._view]
 
         def saved(_result):
-            note = "Order saved to the iPod"
+            note = f"Order saved to the {self.noun}"
             if playlist is not None and self._mirror_order(playlist.name, tracks):
                 note += f" and to “{playlist.name}” in your library, so syncing keeps it"
             self._note_after_load = note
@@ -383,7 +392,7 @@ class DeviceBrowser(QWidget):
             return
         tracks = self._selected_tracks()
         matches = [m for t in tracks if self.library and (m := self.library.find_track(t.title, t.artist, t.album))]
-        dlg = DeleteDialog(len(tracks), len(matches), self)
+        dlg = DeleteDialog(len(tracks), len(matches), self, self.noun)
         if not dlg.exec():
             return
         also_library = bool(matches) and dlg.also_library.isChecked()
@@ -393,7 +402,7 @@ class DeviceBrowser(QWidget):
                 for m in matches:
                     self.library.delete_track(m.video_id)
                 self.library_edited.emit()
-            self._note_after_load = (f"Deleted {count} song{'s' if count != 1 else ''} from the iPod"
+            self._note_after_load = (f"Deleted {count} song{'s' if count != 1 else ''} from the {self.noun}"
                                      + (" and your library" if also_library else ""))
             self.load(self._device, self._prefer_rockbox_files)
 
@@ -433,10 +442,11 @@ class DeviceBrowser(QWidget):
 
     def _row_path(self, row: int) -> str | None:
         num = self.table.item(row, 0)
-        if num is None or self._device is None:
+        root = self._files_root()
+        if num is None or root is None:
             return None
         track = self._contents.tracks[num.data(TRACK_INDEX)]
-        return str(self._device.path / track.location.lstrip("/")) if track.location else None
+        return str(root / track.location.lstrip("/")) if track.location else None
 
     def _show_selected(self, row: int) -> None:
         if row < 0 and self._now_path:  # nothing selected: show what's playing
