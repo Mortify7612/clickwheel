@@ -11,9 +11,13 @@ a folder under ``<config>/profiles/<id>/`` holding:
 
 from __future__ import annotations
 
+import contextlib
+import glob
 import http.cookiejar
 import json
+import os
 import shutil
+import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -25,10 +29,27 @@ from ytmusicapi.helpers import initialize_headers
 
 from .config import CONFIG_DIR, COOKIES_FILE, HEADERS_FILE, write_private
 
-BROWSERS = ["firefox", "chrome", "chromium", "brave", "edge", "vivaldi", "opera", "safari"]
+BROWSERS = ["firefox", "chrome", "chromium", "brave", "edge", "vivaldi", "opera"]
+if sys.platform in ("darwin", "win32"):
+    BROWSERS.append("arc")
+if sys.platform == "darwin":
+    BROWSERS.append("safari")
+BROWSER_NAMES = {"edge": "Microsoft Edge"}
 YT_DOMAINS = (".youtube.com", "youtube.com", "music.youtube.com", ".google.com")
 REQUIRED_COOKIE = "__Secure-3PAPISID"
 ORIGIN = "https://music.youtube.com"
+# Safari 13+ keeps its cookies in its sandbox; the old location is still used by
+# other WebKit apps, so it can exist without holding any Safari logins.
+SAFARI_COOKIES = (
+    "~/Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies",
+    "~/Library/Cookies/Cookies.binarycookies",
+)
+# Arc is Chromium under its own folder and keychain entry ("Arc Safe Storage").
+ARC_DIRS = {
+    "darwin": "~/Library/Application Support/Arc/User Data",
+    "win32": "%LOCALAPPDATA%/Packages/TheBrowserCompany.Arc_*/LocalCache/Local/Arc/User Data",
+}
+FULL_DISK_ACCESS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
 
 PROFILES_DIR = CONFIG_DIR / "profiles"
 ACTIVE_FILE = CONFIG_DIR / "active_profile"
@@ -219,15 +240,109 @@ def _cookie_header(jar: http.cookiejar.CookieJar) -> str:
     return "; ".join(f"{c.name}={c.value}" for c in jar if c.domain.endswith((".youtube.com", "youtube.com")))
 
 
+def _safari_cookies_path() -> str:
+    """Where Safari's cookies are, or why we can't read them.
+
+    macOS hides Safari's data from other apps until the user grants Full Disk
+    Access, and then even a stat() fails, which yt-dlp reports as "could not
+    find safari cookies database".
+    """
+    for candidate in SAFARI_COOKIES:
+        path = Path(candidate).expanduser()
+        try:
+            with open(path, "rb"):
+                return str(path)
+        except FileNotFoundError:
+            continue
+        except PermissionError as exc:
+            who = "Clickwheel" if getattr(sys, "frozen", False) else "the terminal app you run Clickwheel from"
+            raise AuthError(
+                f"macOS is blocking access to Safari's cookies. Open System Settings → Privacy & Security → "
+                f"Full Disk Access and turn on {who} (add it with + if it isn't listed; if it is already on, "
+                f"turn it off and on again, as updates can reset it). Then quit and reopen Clickwheel and "
+                f"try again."
+            ) from exc
+    raise AuthError("Couldn't find Safari's cookies. Open music.youtube.com in Safari, sign in, then try again.")
+
+
+def browser_name(browser: str) -> str:
+    return BROWSER_NAMES.get(browser, browser.capitalize())
+
+
+class _CookieLog:
+    """Keeps yt-dlp's warnings so a failed import can say what went wrong."""
+
+    def __init__(self):
+        self.warnings: list[str] = []
+
+    def debug(self, message):
+        pass
+
+    info = debug
+
+    def warning(self, message, only_once=False):
+        self.warnings.append(message)
+
+    def error(self, message):
+        self.warnings.append(message)
+
+
+@contextlib.contextmanager
+def _arc_known():
+    """Teach yt-dlp where Arc keeps its cookies."""
+    from yt_dlp import cookies
+
+    known = cookies._get_chromium_based_browser_settings
+
+    def settings(browser):
+        if browser != "arc":
+            return known(browser)
+        pattern = os.path.expanduser(os.path.expandvars(ARC_DIRS.get(sys.platform, "")))
+        found = sorted(glob.glob(pattern))
+        return {"browser_dir": found[0] if found else pattern, "keyring_name": "Arc", "supports_profiles": True}
+
+    cookies._get_chromium_based_browser_settings = settings
+    try:
+        yield
+    finally:
+        cookies._get_chromium_based_browser_settings = known
+
+
+def _locked_message(name: str) -> str:
+    if sys.platform == "darwin":
+        return (f"macOS didn't let Clickwheel unlock {name}'s cookies. Try again and click Always Allow when "
+                f"macOS asks to use \"{name} Safe Storage\" from your keychain.")
+    if sys.platform == "win32":
+        return (f"Couldn't decrypt {name}'s cookies; newer versions block other apps from reading them. "
+                "Use Firefox, or the Paste headers or Cookies file tab instead.")
+    return f"Couldn't decrypt {name}'s cookies. Unlock your keyring (KWallet or GNOME Keyring) and try again."
+
+
 def sign_in_from_browser(browser: str, browser_profile: str | None = None, authuser: str = "0") -> Profile:
     """Import the YouTube session from an installed browser's cookie store."""
-    from yt_dlp.cookies import extract_cookies_from_browser
+    from yt_dlp import cookies
 
+    name = browser_name(browser)
+    if browser == "safari" and sys.platform == "darwin" and not browser_profile:
+        # yt-dlp takes a Safari "profile" to be the cookie file's path.
+        browser_profile = _safari_cookies_path()
+    log = _CookieLog()
     try:
-        jar = extract_cookies_from_browser(browser, browser_profile)
+        if browser == "arc":
+            with _arc_known():
+                jar = cookies._extract_chrome_cookies("arc", browser_profile, None, log)
+        else:
+            jar = cookies.extract_cookies_from_browser(browser, browser_profile, log)
+    except FileNotFoundError as exc:
+        where = f" (profile \"{browser_profile}\")" if browser_profile else ""
+        raise AuthError(f"Couldn't find {name}'s cookies{where}. Is {name} installed on this computer?") from exc
     except Exception as exc:
-        raise AuthError(f"Couldn't read {browser} cookies: {exc}") from exc
-    return _store(_headers_from_cookie_header(_cookie_header(jar), authuser), jar, authuser)
+        raise AuthError(f"Couldn't read {name} cookies: {exc}") from exc
+    cookie_header = _cookie_header(jar)
+    if REQUIRED_COOKIE not in cookie_header and any(
+            "decrypt" in w or "find-generic-password" in w or "keyring" in w for w in log.warnings):
+        raise AuthError(_locked_message(name))
+    return _store(_headers_from_cookie_header(cookie_header, authuser), jar, authuser)
 
 
 def sign_in_from_headers(raw_headers: str) -> Profile:

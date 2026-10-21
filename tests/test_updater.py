@@ -109,6 +109,7 @@ def test_windows_script_mirrors_and_relaunches(tmp_path):
     name, body = updater.swap_script(tmp_path / "new", tmp_path / "app", tmp_path / "stage", 1234, "win32")
     assert name.endswith(".cmd")
     assert 'PID eq 1234' in body and "robocopy" in body and "Clickwheel.exe" in body
+    assert "/XF unins*.exe" in body  # keep the installer's uninstaller
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX hand-off script")
@@ -142,3 +143,9 @@ def test_posix_swap_script_replaces_and_relaunches(tmp_path):
 
 def test_running_from_source_cannot_self_update():
     assert "source" in updater.self_update_blocker()
+
+
+def test_appimage_points_to_download_page(monkeypatch):
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    monkeypatch.setenv("APPIMAGE", "/home/me/Clickwheel.AppImage")
+    assert "AppImage" in updater.self_update_blocker()

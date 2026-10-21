@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
@@ -29,7 +31,7 @@ class LoginDialog(QDialog):
         browser_tab = QWidget()
         form = QFormLayout(browser_tab)
         self.browser = QComboBox()
-        self.browser.addItems([b.capitalize() for b in auth.BROWSERS])
+        self.browser.addItems([auth.browser_name(b) for b in auth.BROWSERS])
         self.profile = QLineEdit()
         self.profile.setPlaceholderText("Default profile")
         self.authuser = QSpinBox(minimum=0, maximum=9)
@@ -38,11 +40,27 @@ class LoginDialog(QDialog):
         form.addRow("Browser", self.browser)
         form.addRow("Browser profile (optional)", self.profile)
         form.addRow("Google account #", self.authuser)
-        hint = QLabel("Firefox works on every platform. On Windows, Chrome/Edge may need to be closed first, "
-                      "and newer Chrome versions block cookie access entirely; use Firefox or another tab then.")
+        if sys.platform == "darwin":
+            hint = QLabel("Chrome, Arc, Brave, Edge, Vivaldi and Opera keep their cookies locked in your keychain: "
+                          "when macOS asks, enter your login password and click Always Allow.")
+        elif sys.platform == "win32":
+            hint = QLabel("Firefox works best. Chrome/Edge may need to be closed first, and newer Chrome versions "
+                          "block cookie access entirely; use Firefox or another tab then.")
+        else:
+            hint = QLabel("Firefox works best. Chromium-based browsers may ask you to unlock your keyring first.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(placeholder-text);")
         form.addRow(hint)
+        self.safari_hint = QLabel(
+            "On macOS, reading Safari's cookies needs "
+            f"<a href='{auth.FULL_DISK_ACCESS_URL}'>Full Disk Access</a> for Clickwheel "
+            "(System Settings → Privacy &amp; Security). Quit and reopen Clickwheel after turning it on."
+        )
+        self.safari_hint.setWordWrap(True)
+        self.safari_hint.setOpenExternalLinks(True)
+        form.addRow(self.safari_hint)
+        self.browser.currentIndexChanged.connect(self._browser_changed)
+        self._browser_changed()
         self.tabs.addTab(browser_tab, "From browser")
 
         # Raw request headers
@@ -85,6 +103,10 @@ class LoginDialog(QDialog):
         layout.addWidget(self.tabs)
         layout.addWidget(self.status)
         layout.addWidget(self.buttons)
+
+    def _browser_changed(self) -> None:
+        safari = auth.BROWSERS[self.browser.currentIndex()] == "safari"
+        self.safari_hint.setVisible(safari and sys.platform == "darwin")
 
     def _pick_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Cookie file", "", "Cookie files (*.txt);;All files (*)")

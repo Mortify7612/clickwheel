@@ -94,3 +94,155 @@ def test_old_library_gains_profile_column(tmp_path):
     assert [(p.title, p.profile) for p in lib.playlists()] == [("Old", "")]
     lib.save_playlist("PL2", "New", "playlist", "", [], profile="abc123")
     assert {p.title: p.profile for p in lib.playlists()} == {"Old": "", "New": "abc123"}
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="relies on POSIX file permissions")
+def test_safari_cookies_blocked_by_macos_privacy(store, tmp_path, monkeypatch):
+    sandboxed, legacy = tmp_path / "container" / "Cookies.binarycookies", tmp_path / "Cookies.binarycookies"
+    monkeypatch.setattr(auth, "SAFARI_COOKIES", (str(sandboxed), str(legacy)))
+    monkeypatch.setattr(sys, "platform", "darwin")
+    with pytest.raises(auth.AuthError, match="Couldn't find Safari's cookies"):
+        auth.sign_in_from_browser("safari")
+
+    # Without Full Disk Access, macOS refuses even to stat Safari's sandbox; the
+    # stale shared file next to it must not be read instead.
+    legacy.write_bytes(b"cook")
+    sandboxed.parent.mkdir()
+    sandboxed.write_bytes(b"cook")
+    sandboxed.parent.chmod(0)
+    try:
+        if not _readable(sandboxed):  # root reads it anyway
+            with pytest.raises(auth.AuthError, match="Full Disk Access"):
+                auth.sign_in_from_browser("safari")
+    finally:
+        sandboxed.parent.chmod(0o755)
+
+    import yt_dlp.cookies
+    asked = []
+    monkeypatch.setattr(yt_dlp.cookies, "extract_cookies_from_browser",
+                        lambda browser, profile, logger: asked.append(profile) or auth._jar_from_cookie_header(COOKIE))
+    assert auth.sign_in_from_browser("safari").name == "Alex"
+    assert asked == [str(sandboxed)]
+
+
+def _readable(path) -> bool:
+    try:
+        path.read_bytes()
+        return True
+    except PermissionError:
+        return False
+
+
+# ── Every browser, as macOS lays them out ────────────────────────────────────
+
+MAC_CHROMIUM = {  # browser: (data folder under ~/Library/Application Support, keychain name)
+    "chrome": ("Google/Chrome/Default", "Chrome"),
+    "chromium": ("Chromium/Default", "Chromium"),
+    "brave": ("BraveSoftware/Brave-Browser/Default", "Brave"),
+    "edge": ("Microsoft Edge/Default", "Microsoft Edge"),
+    "vivaldi": ("Vivaldi/Default", "Vivaldi"),
+    "opera": ("com.operasoftware.Opera", "Opera"),
+    "arc": ("Arc/User Data/Default", "Arc"),
+}
+YT_COOKIES = [(".youtube.com", "SID", "abc"), (".youtube.com", "__Secure-3PAPISID", "xyz"),
+              (".example.com", "other", "1")]
+
+
+def _chromium_store(folder, password: bytes) -> None:
+    """A Chrome cookie database (schema 24) encrypted the way Chrome on macOS does it."""
+    import hashlib
+
+    from yt_dlp.aes import aes_cbc_encrypt_bytes
+
+    key = hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", 1003, 16)
+    folder.mkdir(parents=True)
+    db = sqlite3.connect(folder / "Cookies")
+    db.execute("CREATE TABLE meta (key TEXT, value TEXT)")
+    db.execute("INSERT INTO meta VALUES ('version', '24')")
+    db.execute("CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT, encrypted_value BLOB, path TEXT, "
+               "expires_utc INTEGER, is_secure INTEGER)")
+    for host, name, value in YT_COOKIES:
+        plain = hashlib.sha256(host.encode()).digest() + value.encode()
+        db.execute("INSERT INTO cookies VALUES (?, ?, '', ?, '/', 0, 1)",
+                   (host, name, b"v10" + aes_cbc_encrypt_bytes(plain, key, b" " * 16)))
+    db.commit()
+    db.close()
+
+
+def _firefox_store(folder) -> None:
+    folder.mkdir(parents=True)
+    db = sqlite3.connect(folder / "cookies.sqlite")
+    db.execute("CREATE TABLE moz_cookies (host TEXT, name TEXT, value TEXT, path TEXT, expiry INTEGER, "
+               "isSecure INTEGER, originAttributes TEXT)")
+    db.executemany("INSERT INTO moz_cookies VALUES (?, ?, ?, '/', 2000000000, 1, '')", YT_COOKIES)
+    db.commit()
+    db.close()
+
+
+def _safari_store(path) -> None:
+    """Safari's Cookies.binarycookies: one page of little-endian records."""
+    import struct
+
+    records = []
+    for host, name, value in YT_COOKIES:
+        strings = b"".join(s.encode() + b"\0" for s in (host, name, "/", value))
+        offsets, at = [], 56
+        for s in (host, name, "/"):
+            offsets.append(at)
+            at += len(s.encode()) + 1
+        offsets.append(at)
+        size = 56 + len(strings)
+        records.append(struct.pack("<IIII4I8sdd", size, 0, 1, 0, *offsets, b"\0" * 8, 1e9, 7e8) + strings)
+    header = struct.pack("<4sI", b"\0\0\1\0", len(records))
+    at = len(header) + 4 * len(records) + 4
+    offsets = []
+    for r in records:
+        offsets.append(at)
+        at += len(r)
+    page = header + struct.pack(f"<{len(records)}I", *offsets) + b"\0" * 4 + b"".join(records)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"cook" + struct.pack(">II", 1, len(page)) + page + b"\0" * 8)
+
+
+@pytest.fixture
+def mac_home(store, tmp_path, monkeypatch):
+    import yt_dlp.cookies
+
+    home = tmp_path / "home"
+    support = home / "Library/Application Support"
+    for browser, (folder, keychain) in MAC_CHROMIUM.items():
+        _chromium_store(support / folder, f"pw-{keychain}".encode())
+    _firefox_store(support / "Firefox/Profiles/abcd.default-release")
+    _safari_store(home / "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(sys, "platform", "darwin")
+    keychain = {"asked": [], "allow": True}
+
+    def keychain_password(name, logger):
+        keychain["asked"].append(name)
+        if keychain["allow"]:
+            return f"pw-{name}".encode()
+        logger.warning("find-generic-password failed")
+        return None
+
+    monkeypatch.setattr(yt_dlp.cookies, "_get_mac_keyring_password", keychain_password)
+    return keychain
+
+
+@pytest.mark.parametrize("browser", [*MAC_CHROMIUM, "firefox", "safari"])
+def test_every_browser_signs_in_on_macos(mac_home, browser):
+    profile = auth.sign_in_from_browser(browser)
+    assert profile.name == "Alex"
+    cookies = (profile.dir / "cookies.txt").read_text()
+    assert "__Secure-3PAPISID\txyz" in cookies and "other" not in cookies
+    assert mac_home["asked"] == ([MAC_CHROMIUM[browser][1]] if browser in MAC_CHROMIUM else [])
+
+
+def test_keychain_refusal_and_missing_browser_on_macos(mac_home, tmp_path):
+    mac_home["allow"] = False
+    with pytest.raises(auth.AuthError, match="Always Allow"):
+        auth.sign_in_from_browser("arc")
+    import shutil
+    shutil.rmtree(tmp_path / "home/Library/Application Support/Arc")
+    with pytest.raises(auth.AuthError, match="Couldn't find Arc's cookies"):
+        auth.sign_in_from_browser("arc")

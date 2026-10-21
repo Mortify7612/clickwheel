@@ -1,8 +1,8 @@
 name: Build
 
 # Tests run on every push. Installers are built on demand (Actions tab ->
-# Build -> Run workflow) or when a version tag like v0.2.0 is pushed, since
-# macOS runner minutes are billed at 10x on private repos.
+# Build -> Run workflow) or when a version tag like v0.2.0 is pushed, which
+# also publishes them as a GitHub release.
 on:
   push:
     branches: [master]
@@ -75,36 +75,54 @@ jobs:
           "$exe" devices
           "$exe" logout
 
+      # The .zip/.tar.gz/.dmg named Clickwheel-<platform>.* are what the built-in
+      # updater downloads; the setup .exe and AppImage are for first installs.
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: hdiutil create -volname Clickwheel -srcfolder dist/Clickwheel.app -ov -format UDZO "Clickwheel-${{ matrix.name }}.dmg"
+        run: |
+          mkdir dmg && cp -R dist/Clickwheel.app dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname Clickwheel -srcfolder dmg -ov -format UDZO "Clickwheel-${{ matrix.name }}.dmg"
       - name: Package (Windows)
         if: runner.os == 'Windows'
-        run: Compress-Archive -Path dist/Clickwheel -DestinationPath "Clickwheel-${{ matrix.name }}.zip"
+        run: |
+          Compress-Archive -Path dist/Clickwheel -DestinationPath "Clickwheel-${{ matrix.name }}.zip"
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+            $env:Path += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+          }
+          $version = uv run python -c "from clickwheel._version import __version__; print(__version__)"
+          iscc /Q "/DAppVersion=$version" packaging\clickwheel.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Package (Linux)
         if: runner.os == 'Linux'
-        run: tar -czf "Clickwheel-${{ matrix.name }}.tar.gz" -C dist Clickwheel
+        run: |
+          tar -czf "Clickwheel-${{ matrix.name }}.tar.gz" -C dist Clickwheel
+          appdir=build/Clickwheel.AppDir
+          mkdir -p "$appdir"
+          cp -a dist/Clickwheel packaging/appimage/AppRun packaging/appimage/clickwheel.desktop "$appdir/"
+          cp packaging/icons/clickwheel-256.png "$appdir/clickwheel.png"
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run "$appdir" Clickwheel-linux-x86_64.AppImage
+          ./Clickwheel-linux-x86_64.AppImage --appimage-extract-and-run devices
 
       - uses: actions/upload-artifact@v4
         with:
           name: Clickwheel-${{ matrix.name }}
-          path: Clickwheel-${{ matrix.name }}.*
+          path: |
+            Clickwheel-${{ matrix.name }}.*
+            Clickwheel-*-setup.exe
+            Clickwheel-*.AppImage
           if-no-files-found: error
 
-  # Installers go to the public releases repo (the source repo is private) so the
-  # app's built-in updater can download them without a GitHub login.
-  # Requires secret RELEASES_TOKEN: fine-grained token with Contents read/write
-  # on Mortify7612/clickwheel-releases only.
+  # The app's built-in updater reads this repo's latest release.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Check token
-        env:
-          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-        run: |
-          [ -n "$RELEASES_TOKEN" ] || { echo "::error::Add the RELEASES_TOKEN secret (see workflow comment)"; exit 1; }
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -121,8 +139,6 @@ jobs:
         run: sha256sum Clickwheel-* > SHA256SUMS.txt && cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
-          repository: Mortify7612/clickwheel-releases
-          token: ${{ secrets.RELEASES_TOKEN }}
           tag_name: ${{ github.ref_name }}
           name: Clickwheel ${{ github.ref_name }}
           body_path: notes.md
