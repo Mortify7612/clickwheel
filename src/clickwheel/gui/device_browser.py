@@ -50,6 +50,7 @@ class DeviceBrowser(QWidget):
     editing = Signal(bool)       # an edit is being written to the device
     play_requested = Signal(list, int)  # PlayItems in view order, index to start at
     library_edited = Signal()    # the local library changed as a side effect
+    contents_read = Signal(str, object)  # device name and its DeviceContents ("" and None: no device)
 
     def __init__(self, library: Library | None = None):
         super().__init__()
@@ -142,6 +143,7 @@ class DeviceBrowser(QWidget):
         self._dirty = False
         if device is None:
             self._set_contents(DeviceContents([], []), "No device")
+            self.contents_read.emit("", None)
             return
         self.summary.setText("Reading device…")
         self.refresh_btn.setEnabled(False)
@@ -149,15 +151,18 @@ class DeviceBrowser(QWidget):
             self._backend = device.backend(prefer_rockbox_files)
         except RuntimeError as exc:
             self._set_contents(DeviceContents([], []), str(exc))
+            self.contents_read.emit("", None)
             return
         path = device.path
 
         def done(contents):
             if self._device is not None and self._device.path == path:  # ignore stale loads
                 self._set_contents(contents)
+                self.contents_read.emit(self._device.name, contents)
 
         def failed(message):
             self._set_contents(DeviceContents([], []), f"Couldn't read the device: {message}")
+            self.contents_read.emit("", None)
 
         workers.run(self._backend.browse, on_done=done, on_error=failed)
 

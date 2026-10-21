@@ -79,7 +79,7 @@ class DevicePage(QWidget):
         self.pick.setEnabled(False)
         mirror_note = QLabel("The iPod is made to match the selection: other songs Clickwheel synced are removed. "
                              "To add songs without removing any, select them on the Library tab and use "
-                             "“Sync selected to iPod”.")
+                             "“Sync to iPod” (or right-click them).")
         mirror_note.setWordWrap(True)
         mirror_note.setStyleSheet("color: palette(placeholder-text);")
         wv.addWidget(self.all_radio)

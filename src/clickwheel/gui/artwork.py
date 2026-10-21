@@ -174,6 +174,9 @@ class ArtPanel(QWidget):
             label.setWordWrap(True)
             label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
             layout.addWidget(label)
+        self.footer = QVBoxLayout()  # room for a page's own extras under the caption
+        layout.addSpacing(6)
+        layout.addLayout(self.footer)
         layout.addStretch(1)
         self.setFixedWidth(LARGE + 8)
         self.setMinimumHeight(120)
@@ -205,8 +208,9 @@ class ArtPanel(QWidget):
 
     def _fit_cover(self) -> None:
         width = self.width() - 8
-        caption = sum(label.sizeHint().height() for label in (self.title, self.artist, self.album)
-                      if label.isVisible()) + 24
+        extras = [self.footer.itemAt(i).widget() for i in range(self.footer.count())]
+        caption = sum(w.sizeHint().height() for w in (self.title, self.artist, self.album, *extras)
+                      if w is not None and not w.isHidden()) + 30
         side = max(48, min(LARGE, width, self.height() - caption))
         self.cover.setFixedSize(side, side)
         self.cover.setPixmap(self._pixmap if side == self._pixmap.width()

@@ -69,6 +69,7 @@ class LibraryPlaylist:
     url: str
     track_count: int
     profile: str = ""
+    updated_at: float = 0.0  # unix time it was last downloaded or updated
 
 
 class Library:
@@ -167,7 +168,7 @@ class Library:
     def playlists(self) -> list[LibraryPlaylist]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT p.id, p.title, p.kind, p.url, COUNT(i.video_id), p.profile FROM playlists p "
+                "SELECT p.id, p.title, p.kind, p.url, COUNT(i.video_id), p.profile, p.updated_at FROM playlists p "
                 "LEFT JOIN playlist_items i ON i.playlist_id = p.id GROUP BY p.id "
                 "ORDER BY p.title COLLATE NOCASE").fetchall()
         return [LibraryPlaylist(*r) for r in rows]

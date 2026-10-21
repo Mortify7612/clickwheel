@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -121,6 +122,7 @@ class MainWindow(QMainWindow):
         # Edits on the iPod tab can also change the library (mirrored order, deletions).
         self.device_page.browser.library_edited.connect(self.library_page.refresh)
         self.device_page.browser.library_edited.connect(self.device_page.refresh_choices)
+        self.device_page.browser.contents_read.connect(self.library_page.set_device_contents)
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
@@ -157,6 +159,7 @@ class MainWindow(QMainWindow):
             self.device_page.sync_songs(paths)
 
         self.library_page.sync_requested.connect(sync_songs)
+        self.library_page.browse_requested.connect(lambda: tabs.setCurrentWidget(self.ytm_page))
 
         menu = self.menuBar().addMenu("&File")
         prefs = QAction("Settings…", self)
@@ -191,6 +194,7 @@ class MainWindow(QMainWindow):
         for table in (self.library_page.table, self.device_page.browser.table, self.ytm_page.table):
             restyle_table(table)
         self.player_bar.refresh_icons()
+        self.library_page.restyle()
         self.title_bar.setVisible(is_retro())
         for brackets in self._hud:
             brackets.setVisible(current_theme() == "halo")
@@ -224,6 +228,13 @@ class MainWindow(QMainWindow):
         player.spectrum.connect(lcd.set_spectrum)
         player.error.connect(lambda msg: self.statusBar().showMessage(msg, 8000))
         self.library_page.play_requested.connect(player.play_queue)
+
+        def shuffle(items):
+            player.set_shuffle(True)
+            self.player_bar.shuffle_btn.setChecked(True)
+            player.play_queue(items, random.randrange(len(items)))
+
+        self.library_page.shuffle_requested.connect(shuffle)
         for page in (self.library_page, self.device_page.browser):
             player.track_changed.connect(lambda item, page=page: page.set_now_playing(item.path if item else None))
         self.device_page.browser.play_requested.connect(player.play_queue)
