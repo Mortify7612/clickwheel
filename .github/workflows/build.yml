@@ -53,6 +53,26 @@ jobs:
       - run: uv sync --locked
       # Static fpcalc (song matching), shipped inside the app.
       - run: uv run python -m clickwheel.tools fetch-fpcalc
+      # ffmpeg/ffprobe, shipped inside the Mac and Windows apps. Nobody publishes a
+      # redistributable native arm64 Mac build, so the Mac jobs compile it from
+      # pinned sources, cached until the script changes; Windows downloads one.
+      - name: Cache ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/ffmpeg
+          key: ffmpeg-${{ matrix.name }}-${{ hashFiles('packaging/build-ffmpeg-macos.sh') }}
+      - name: Build tools for ffmpeg (macOS)
+        if: runner.os == 'macOS' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: brew install nasm pkgconf
+      - name: Fetch ffmpeg
+        if: runner.os == 'Windows' || (runner.os == 'macOS' && steps.ffmpeg-cache.outputs.cache-hit != 'true')
+        run: uv run python -m clickwheel.tools fetch-ffmpeg
+      - name: Test with the bundled ffmpeg
+        if: runner.os != 'Linux'
+        shell: bash
+        run: uv run python -c "import pathlib; print(pathlib.Path('build/ffmpeg').resolve())" >> "$GITHUB_PATH"
 
       # Tests that need ffmpeg skip themselves where it isn't installed.
       - run: uv run pytest -q
@@ -74,6 +94,20 @@ jobs:
           esac
           "$exe" devices
           "$exe" logout
+          if [ "${{ runner.os }}" != Linux ]; then
+            # The copies inside the app must run and encode what pyPodLib asks for.
+            for tool in ffmpeg ffprobe; do
+              found=$(find dist -type f \( -name "$tool" -o -name "$tool.exe" \) | head -1)
+              [ -n "$found" ] || { echo "$tool is not in the app"; exit 1; }
+              "$found" -hide_banner -version | head -1
+            done
+            ffmpeg=$(find dist -type f \( -name ffmpeg -o -name ffmpeg.exe \) | head -1)
+            tone="-hide_banner -loglevel error -y -f lavfi -i sine=duration=1"
+            "$ffmpeg" $tone -c:a aac smoke-aac.m4a
+            "$ffmpeg" $tone -c:a alac smoke-alac.m4a
+            "$ffmpeg" $tone -c:a libmp3lame smoke.mp3
+            "$ffmpeg" -hide_banner -loglevel error -y -f lavfi -i testsrc=duration=1 -c:v libx264 smoke.mp4
+          fi
 
       # The .zip/.tar.gz/.dmg named Clickwheel-<platform>.* are what the built-in
       # updater downloads; the setup .exe and AppImage are for first installs.

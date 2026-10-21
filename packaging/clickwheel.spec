@@ -33,6 +33,18 @@ _fpcalc = get_bundled_fpcalc()
 if not _fpcalc:
     raise SystemExit("fpcalc missing: run `uv run python -m clickwheel.tools fetch-fpcalc` first")
 binaries.append((_fpcalc, "."))
+
+# ffmpeg/ffprobe (YouTube downloads, iPod transcoding) ship inside the Mac and
+# Windows apps; on Linux they come from the distro. The launcher puts the bundle
+# first on PATH so yt-dlp and pyPodLib find them.
+if sys.platform in ("darwin", "win32"):
+    _ffmpeg_dir = os.path.join(SPECPATH, "..", "build", "ffmpeg")
+    for _tool in ("ffmpeg", "ffprobe"):
+        _path = os.path.join(_ffmpeg_dir, _tool + (".exe" if sys.platform == "win32" else ""))
+        if not os.path.isfile(_path):
+            raise SystemExit("ffmpeg missing: run `uv run python -m clickwheel.tools fetch-ffmpeg` first")
+        binaries.append((_path, "."))
+    datas.append((os.path.join(_ffmpeg_dir, "LICENSE-ffmpeg.txt"), "licenses"))
 # pyPodLib imports most of its modules lazily inside functions.
 hiddenimports = collect_submodules("pypodlib") + collect_submodules("ytmusicapi") + collect_submodules("yt_dlp_ejs")
 

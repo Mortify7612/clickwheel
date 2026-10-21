@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import plistlib
 import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -161,6 +163,24 @@ def mount_unmounted_ipods() -> list[str]:
     return mounted
 
 
+def macos_mount_point(mount: Path) -> Path:
+    """``mount`` spelled the way diskutil spells it.
+
+    Accented letters in a volume name can come back composed from the mount
+    table and decomposed from diskutil (or the other way round). Both name the
+    same folder, but pyPodLib compares the two byte for byte before writing and
+    refuses with "not mounted as its own volume".
+    """
+    try:
+        out = subprocess.run(["diskutil", "info", "-plist", str(mount)], capture_output=True, timeout=10).stdout
+        spelled = str(plistlib.loads(out).get("MountPoint") or "")
+    except (OSError, subprocess.SubprocessError, plistlib.InvalidFileException, ValueError, AttributeError):
+        return mount
+    if spelled and unicodedata.normalize("NFC", spelled) == unicodedata.normalize("NFC", str(mount)):
+        return Path(spelled)
+    return mount
+
+
 _zune_device: Device | None = None  # last seen Zune; probing it opens an MTP session
 ZUNE_STATUS_EVERY_S = 60
 
@@ -200,6 +220,8 @@ def scan() -> list[Device]:
     found: dict[Path, Device] = {}
     for part in psutil.disk_partitions(all=False):
         mount = Path(part.mountpoint)
+        if sys.platform == "darwin" and not part.mountpoint.isascii():
+            mount = macos_mount_point(mount)
         try:
             dev = identify(mount)
         except (OSError, PermissionError):
