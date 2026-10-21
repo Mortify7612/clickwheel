@@ -361,7 +361,7 @@ def test_macos_uses_diskutils_spelling_of_accented_volume_names(monkeypatch):
                         subprocess.CompletedProcess(cmd, 0, plistlib.dumps(reported), b""))
     monkeypatch.setattr(devices, "identify", lambda path: devices.Device(path, "iPod", "Shuffle", "apple", True))
 
-    assert [str(d.path) for d in devices.scan()] == [decomposed, "/Volumes/PLAIN"]
+    assert [d.path for d in devices.scan()] == [Path(decomposed), Path("/Volumes/PLAIN")]
     assert asked == [composed]  # plain names don't need asking
 
     # A different volume altogether keeps pyPodLib's safety check in play.
