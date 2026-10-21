@@ -338,6 +338,7 @@ def test_shuffle_repairs_stale_itunessd_and_delete_cleans_mapping(library, tmp_p
     assert "stale" not in caplog.text
 
 
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="fakes macOS paths")
 def test_macos_uses_diskutils_spelling_of_accented_volume_names(monkeypatch):
     import plistlib
     import subprocess
