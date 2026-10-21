@@ -133,6 +133,8 @@ def self_update_blocker() -> str | None:
     """Why this copy can't replace itself, or None if it can."""
     if not is_frozen():
         return "You're running Clickwheel from source; update with git pull instead."
+    if os.environ.get("APPIMAGE"):
+        return "This is the AppImage build. Download the new AppImage and replace the old one."
     target = install_target()
     if not os.access(target.parent, os.W_OK):
         return f"Clickwheel is installed in a folder it can't write to ({target.parent})."
@@ -213,7 +215,8 @@ def swap_script(new: Path, target: Path, staging: Path, pid: int, system: str = 
             "@echo off",
             ":wait",
             f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL && (timeout /t 1 /nobreak >NUL & goto wait)',
-            f'robocopy "{new}" "{target}" /MIR /NFL /NDL /NJH /NJS /NP >NUL',
+            # /XF keeps the installer's uninstaller, which isn't in the new build.
+            f'robocopy "{new}" "{target}" /MIR /XF unins*.exe unins*.dat /NFL /NDL /NJH /NJS /NP >NUL',
             f'start "" "{exe}"',
             f'rmdir /s /q "{staging}"',
             '(goto) 2>nul & del "%~f0"',

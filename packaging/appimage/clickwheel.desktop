@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Clickwheel
+Comment=Download YouTube Music playlists and sync them to an iPod
+Exec=Clickwheel
+Icon=clickwheel
+Categories=AudioVideo;Audio;
+Terminal=false
