@@ -133,6 +133,11 @@ class CoverCache(QObject):
     def has(self, key: str) -> bool:
         return key in self._thumbs
 
+    def shutdown(self) -> None:
+        """Wait for covers still loading. Call before dropping the cache, so no worker thread
+        signals an object that's gone."""
+        self._pool.shutdown(wait=True)
+
     def clear(self) -> None:
         self._thumbs.clear()
         self._large.clear()

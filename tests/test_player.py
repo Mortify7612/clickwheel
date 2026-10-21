@@ -59,7 +59,12 @@ def player():
     from clickwheel.gui.player import Player
 
     QCoreApplication.instance() or QCoreApplication([])
-    return Player(16)
+    player = Player(16)
+    yield player
+    import shiboken6
+
+    player.stop()
+    shiboken6.delete(player)  # the media player has threads: tear it down now, not at exit
 
 
 def saved_state(library, position=61_000):

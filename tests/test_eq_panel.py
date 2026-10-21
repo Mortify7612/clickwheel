@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import shiboken6  # noqa: E402
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -24,6 +25,7 @@ def panel():
     panel.edits = edits
     yield panel
     panel.close()
+    shiboken6.delete(panel)
 
 
 def knob_point(panel, index: int, db: float) -> QPoint:
@@ -76,3 +78,6 @@ def test_deck_button_opens_and_closes_the_panel():
     QTest.mouseClick(bar.eq_btn, Qt.LeftButton)
     QTest.mouseClick(bar.eq_btn, Qt.LeftButton)
     assert toggles == [True, False]
+    player = bar.player
+    shiboken6.delete(bar)  # the media player has threads: tear it down now, not at exit
+    shiboken6.delete(player)

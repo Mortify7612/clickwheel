@@ -6,11 +6,12 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import shiboken6  # noqa: E402
 from PySide6.QtCore import QObject, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from clickwheel import auth  # noqa: E402
-from clickwheel.gui import ytm_page  # noqa: E402
+from clickwheel.gui import workers, ytm_page  # noqa: E402
 from clickwheel.gui.ytm_page import NOTE, STATE, YtmPage  # noqa: E402
 from clickwheel.pipeline import Status, TrackEvent  # noqa: E402
 from clickwheel.ytm import Card, Collection, Listing, Page, PlaylistRef, TrackMeta  # noqa: E402
@@ -104,6 +105,10 @@ def page(library, monkeypatch):
     wait_for(lambda: page.lists.count() == 2)
     yield page
     page.close()
+    page.covers.shutdown()  # let cover threads finish before the page goes
+    wait_for(lambda: not workers.Task._alive)  # and background lookups
+    QApplication.processEvents()
+    shiboken6.delete(page)  # now, not whenever Python gets round to it (at exit, Qt may be half gone)
 
 
 def states(page):
@@ -136,7 +141,7 @@ def test_search_open_album_and_download(page):
     page._show_search_kind("albums")
     wait_for(lambda: page.grid.count() == 1)
     page.grid.opened.emit("album:MPREb_new")
-    wait_for(lambda: page.header.title.text() == "Fresh")
+    wait_for(lambda: page._page is not None and page._page.id == "MPREb_new")  # (the title shows while loading)
     assert "Search results" in page.header.back.text()
     assert page.get_btn.text() == "Download album"
     page.get_btn.click()

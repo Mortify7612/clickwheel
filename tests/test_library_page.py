@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import shiboken6  # noqa: E402
 from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -38,7 +39,15 @@ def page(library):
     page.resize(1100, 700)
     page.show()
     yield page
+    dispose(page)
+
+
+def dispose(page) -> None:
+    """Let cover threads finish and their signals land before the page goes."""
     page.close()
+    page.covers.shutdown()
+    QApplication.processEvents()
+    shiboken6.delete(page)  # now, not whenever Python gets round to it (at exit, Qt may be half gone)
 
 
 def titles(page) -> list[str]:
@@ -61,6 +70,7 @@ def test_empty_library_points_to_youtube_music(tmp_path):
     page.browse_requested.connect(lambda: asked.append(True))
     next(b for b in page.empty.findChildren(type(page.sync_btn)) if b.text() == "Go to YouTube Music").click()
     assert asked == [True]
+    dispose(page)
 
 
 def test_songs_start_in_artist_album_track_order(page):
