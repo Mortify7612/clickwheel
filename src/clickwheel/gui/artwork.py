@@ -139,6 +139,22 @@ class CoverCache(QObject):
         self._missing.clear()
 
 
+class RemoteArt:
+    """A cover on the web, for :meth:`CoverCache.request` (fetched on its worker threads)."""
+
+    def __init__(self, url: str):
+        self.url = url
+
+    def load_png(self) -> bytes | None:
+        import requests
+
+        if not self.url:
+            return None
+        response = requests.get(self.url, timeout=20)
+        response.raise_for_status()
+        return response.content
+
+
 def album_key(album_artist: str, album: str) -> str:
     return f"{album_artist.casefold()}\x1f{album.casefold()}"
 

@@ -195,8 +195,9 @@ class MainWindow(QMainWindow):
                     original = tabs.tabText(i)
                     tabs.tabBar().setTabData(i, original)
                 tabs.setTabText(i, original.upper() if is_retro() else original)
-        for table in (self.library_page.table, self.device_page.browser.table, self.ytm_page.table):
+        for table in (self.library_page.table, self.device_page.browser.table):
             restyle_table(table)
+        self.ytm_page.restyle()
         self.player_bar.refresh_icons()
         self.library_page.restyle()
         self.title_bar.setVisible(is_retro())

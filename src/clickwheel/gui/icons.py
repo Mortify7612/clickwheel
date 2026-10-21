@@ -123,6 +123,11 @@ def _draw(p: QPainter, name: str) -> None:
         p.setPen(Qt.NoPen)
         for x, knob in EQ_FADERS:
             p.drawRoundedRect(QRectF(x - 2.8, knob - 2, 5.6, 4), 1.2, 1.2)
+    elif name == "download":  # an arrow into a tray
+        p.setBrush(Qt.NoBrush)
+        p.drawLine(QPointF(12, 4), QPointF(12, 15))
+        p.drawPolyline(_poly((7.5, 10.5), (12, 15), (16.5, 10.5)))
+        p.drawPolyline(_poly((4.5, 15.5), (4.5, 19.5), (19.5, 19.5), (19.5, 15.5)))
     elif name == "more":
         p.setPen(Qt.NoPen)
         for x in (6, 12, 18):

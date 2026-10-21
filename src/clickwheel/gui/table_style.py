@@ -21,6 +21,7 @@ from .theme import current_theme, is_retro
 TITLE, TEXT, MUTED, NUMBER = "title", "text", "muted", "number"
 MARK = "mark"  # a dot in the accent colour when the cell has any text (e.g. "on the iPod")
 SECTION = Qt.UserRole + 40  # truthy on a group header row (span it across the table)
+PROGRESS = Qt.UserRole + 41  # 0..1 on a cell: a thin progress bar under its text
 ROW_HEIGHT = 46
 SECTION_HEIGHT = 32
 COVER = 36
@@ -186,6 +187,16 @@ class TrackDelegate(QStyledItemDelegate):
                 p.drawText(inner.translated(dx, dy), align, shown)
         p.setPen(color)
         p.drawText(inner, align, shown)
+        progress = index.data(PROGRESS)
+        if progress is not None:
+            bar = QRectF(inner.left(), rect.bottom() - 11, inner.width(), 4)
+            track = QPainterPath()
+            track.addRoundedRect(bar, 2, 2)
+            p.fillPath(track, _tint(color, 45))
+            done = QPainterPath()
+            done.addRoundedRect(QRectF(bar.left(), bar.top(), bar.width() * max(0.0, min(1.0, progress)), bar.height()),
+                                2, 2)
+            p.fillPath(done, pal.color(QPalette.Link) if not selected else color)
         p.restore()
 
 

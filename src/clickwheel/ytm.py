@@ -54,12 +54,62 @@ class Collection:
     skipped: int = 0  # unavailable / region-locked entries
 
 
+@dataclass
+class Listing:
+    """A song as YouTube Music lists it: enough to show and pick it, not yet resolved for tagging."""
+
+    video_id: str
+    title: str
+    artists: list[str]
+    album: str = ""
+    duration: int = 0
+    thumbnail: str = ""
+
+    @property
+    def artist(self) -> str:
+        return ", ".join(self.artists)
+
+    @property
+    def url(self) -> str:
+        return f"https://music.youtube.com/watch?v={self.video_id}"
+
+
+@dataclass
+class Card:
+    """An album, playlist or artist to open."""
+
+    kind: str  # "album" | "playlist" | "artist"
+    id: str    # album browse id, playlist id, or artist channel id
+    title: str
+    subtitle: str = ""
+    thumbnail: str = ""
+
+
+@dataclass
+class Page:
+    """An opened playlist, album or artist: its songs (and an artist's releases)."""
+
+    kind: str  # "playlist" | "album" | "artist"
+    id: str
+    title: str
+    subtitle: str = ""
+    thumbnail: str = ""
+    songs: list[Listing] = field(default_factory=list)
+    releases: list[Card] = field(default_factory=list)
+    url: str = ""
+
+
 def _big_cover(thumbnails: list[dict] | None, size: int) -> str:
     if not thumbnails:
         return ""
     url = max(thumbnails, key=lambda t: t.get("width", 0)).get("url", "")
     # Google image URLs take the size as a suffix, e.g. "=w120-h120-l90-rj".
     return re.sub(r"=w\d+-h\d+[^/]*$", f"=w{size}-h{size}-l90-rj", url)
+
+
+def small_cover(url: str, size: int = 120) -> str:
+    """The same Google-hosted image at ``size`` pixels (other URLs are returned as they are)."""
+    return re.sub(r"=w\d+-h\d+([^/]*)$", f"=w{size}-h{size}\\1", url)
 
 
 def _names(artists: list[dict] | None) -> list[str]:
@@ -127,6 +177,80 @@ class Resolver:
                 _big_cover(p.get("thumbnails"), 120),
             ))
         return refs
+
+    # ── Browsing (fast: one request per page, nothing resolved for tagging) ──
+
+    def search(self, query: str, kind: str) -> list[Listing] | list[Card]:
+        """``kind``: "songs" (Listings), or "albums", "artists", "playlists" (Cards)."""
+        hits = self.yt.search(query, filter=kind, limit=40)
+        if kind == "songs":
+            return [self._listing(h) for h in hits if h.get("videoId")]
+        cards = []
+        for h in hits:
+            if kind == "albums" and h.get("browseId"):
+                subtitle = " · ".join(x for x in (", ".join(_names(h.get("artists"))), h.get("type"), h.get("year")) if x)
+                cards.append(Card("album", h["browseId"], h.get("title", ""), subtitle, _big_cover(h.get("thumbnails"), 300)))
+            elif kind == "artists" and h.get("browseId"):
+                cards.append(Card("artist", h["browseId"], h.get("artist") or h.get("title", ""), "Artist",
+                                  _big_cover(h.get("thumbnails"), 300)))
+            elif kind == "playlists" and h.get("browseId"):
+                count = f"{h['itemCount']} songs" if h.get("itemCount") else ""
+                subtitle = " · ".join(x for x in (h.get("author"), count) if x)
+                cards.append(Card("playlist", h["browseId"].removeprefix("VL"), h.get("title", ""), subtitle,
+                                  _big_cover(h.get("thumbnails"), 300)))
+        return cards
+
+    def playlist_page(self, playlist_id: str) -> Page:
+        data = self.yt.get_playlist(playlist_id, limit=None)
+        author = data.get("author")
+        author = author.get("name", "") if isinstance(author, dict) else str(author or "")
+        songs = [self._listing(t) for t in data.get("tracks", []) if t.get("videoId") and t.get("isAvailable") is not False]
+        return Page("playlist", playlist_id, data.get("title") or playlist_id, author,
+                    _big_cover(data.get("thumbnails"), 300), songs,
+                    url=f"https://music.youtube.com/playlist?list={playlist_id}")
+
+    def album_page(self, browse_id: str) -> Page:
+        album = self._album(browse_id)
+        cover = _big_cover(album.get("thumbnails"), 300)
+        songs = [self._listing(t, album=album.get("title", ""), thumbnail=cover)
+                 for t in album.get("tracks", []) if t.get("videoId") and t.get("isAvailable") is not False]
+        subtitle = " · ".join(x for x in (", ".join(_names(album.get("artists"))), album.get("type"),
+                                          str(album.get("year") or "")) if x)
+        return Page("album", browse_id, album.get("title", ""), subtitle, cover, songs,
+                    url=f"https://music.youtube.com/browse/{browse_id}")
+
+    def artist_page(self, channel_id: str) -> Page:
+        artist = self.yt.get_artist(channel_id)
+        songs = [self._listing(t) for t in (artist.get("songs") or {}).get("results", []) if t.get("videoId")]
+        releases = []
+        for section in ("albums", "singles"):
+            shelf = artist.get(section) or {}
+            items = shelf.get("results", [])
+            if shelf.get("browseId") and shelf.get("params"):  # the shelf only previews; fetch them all
+                try:
+                    items = self.yt.get_artist_albums(shelf["browseId"], shelf["params"])
+                except Exception:
+                    pass
+            for a in items:
+                if a.get("browseId"):
+                    kind = a.get("type") or ("Single" if section == "singles" else "Album")
+                    releases.append(Card("album", a["browseId"], a.get("title", ""),
+                                         " · ".join(x for x in (kind, str(a.get("year") or "")) if x),
+                                         _big_cover(a.get("thumbnails"), 300)))
+        subscribers = artist.get("subscribers")
+        return Page("artist", channel_id, artist.get("name", ""), f"{subscribers} subscribers" if subscribers else "",
+                    _big_cover(artist.get("thumbnails"), 300), songs, releases,
+                    url=f"https://music.youtube.com/channel/{channel_id}")
+
+    @staticmethod
+    def _listing(item: dict, album: str = "", thumbnail: str = "") -> Listing:
+        album_info = item.get("album")
+        return Listing(
+            item["videoId"], item.get("title", ""), _names(item.get("artists")),
+            album or (album_info.get("name", "") if isinstance(album_info, dict) else str(album_info or "")),
+            int(item.get("duration_seconds") or _seconds(item.get("length") or item.get("duration"))),
+            _big_cover(item.get("thumbnails"), 120) or thumbnail,
+        )
 
     # ── Collections ──────────────────────────────────────────────────────
 
