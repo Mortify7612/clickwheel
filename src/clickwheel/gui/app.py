@@ -200,6 +200,7 @@ class MainWindow(QMainWindow):
         self.ytm_page.restyle()
         self.player_bar.refresh_icons()
         self.library_page.restyle()
+        self.device_page.restyle()
         self.title_bar.setVisible(is_retro())
         for brackets in self._hud:
             brackets.setVisible(current_theme() == "halo")

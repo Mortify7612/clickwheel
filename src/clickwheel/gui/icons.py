@@ -128,6 +128,16 @@ def _draw(p: QPainter, name: str) -> None:
         p.drawLine(QPointF(12, 4), QPointF(12, 15))
         p.drawPolyline(_poly((7.5, 10.5), (12, 15), (16.5, 10.5)))
         p.drawPolyline(_poly((4.5, 15.5), (4.5, 19.5), (19.5, 19.5), (19.5, 15.5)))
+    elif name == "ipod":  # body, screen, click wheel
+        color = p.pen().color()
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(5.5, 1.5, 13, 21), 2.6, 2.6)
+        p.setPen(QPen(color, 1.4))
+        p.drawRoundedRect(QRectF(7.8, 3.8, 8.4, 6.4), 1, 1)
+        p.drawEllipse(QPointF(12, 16), 3.9, 3.9)
+        p.setPen(Qt.NoPen)
+        p.setBrush(color)
+        p.drawEllipse(QPointF(12, 16), 1.3, 1.3)
     elif name == "more":
         p.setPen(Qt.NoPen)
         for x in (6, 12, 18):

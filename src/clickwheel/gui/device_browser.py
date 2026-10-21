@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit,
@@ -12,12 +12,13 @@ from PySide6.QtWidgets import (
 
 from ..devices.contents import DeviceContents, DeviceTrack
 from ..library import Library
-from . import workers
+from . import icons, workers
 from .artwork import ArtPanel, CoverCache, album_key
 from .table_style import MUTED, NUMBER, TEXT, TITLE, style_header, style_track_table
 
 ALL = -1
 ART_KEY, ART_PATH, TRACK_INDEX = 257, 258, 259  # item data roles
+LIST_ICON = Qt.UserRole + 1  # on the playlist list: its glyph
 
 
 def _length(seconds: int) -> str:
@@ -183,13 +184,16 @@ class DeviceBrowser(QWidget):
         label = "Play order" if contents.ordered_library else "All songs"
         everything = QListWidgetItem(f"{label} ({len(contents.tracks)})")
         everything.setData(256, ALL)
+        everything.setData(LIST_ICON, "songs")
         self.lists.addItem(everything)
         for i, p in enumerate(contents.playlists):
             item = QListWidgetItem(f"{p.name} ({len(p.track_indices)})")
+            item.setData(LIST_ICON, "playlist")
             item.setData(256, i)
             self.lists.addItem(item)
         self.lists.setCurrentRow(min(self._list_row, self.lists.count() - 1))
         self.lists.blockSignals(False)
+        self.paint_list_icons()
         self._reset_view()
         self._render(note)
 
@@ -293,6 +297,23 @@ class DeviceBrowser(QWidget):
         self.revert_btn.setEnabled(idle and self._dirty)
         self.delete_btn.setEnabled(idle and bool(rows))
         self.refresh_btn.setEnabled(not self._busy)
+        # Only offer what applies here: moving in ordered lists, saving once something moved.
+        for button in (self.up_btn, self.down_btn):
+            button.setVisible(self._reorderable() and self._backend is not None)
+        for button in (self.save_btn, self.revert_btn):
+            button.setVisible(self._dirty)
+
+    def paint_list_icons(self) -> None:
+        """The same glyphs as the Library's sidebar (call after a theme change too)."""
+        pal = self.lists.palette()
+        self.lists.setIconSize(QSize(16, 16))
+        for i in range(self.lists.count()):
+            item = self.lists.item(i)
+            name = item.data(LIST_ICON)
+            if name:
+                icon = QIcon(icons.pixmap(name, pal.color(QPalette.Text), 16))
+                icon.addPixmap(icons.pixmap(name, pal.color(QPalette.HighlightedText), 16), QIcon.Selected)
+                item.setIcon(icon)
 
     # ── Editing ──────────────────────────────────────────────────────────
 
