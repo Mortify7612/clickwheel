@@ -16,7 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools
+      # The libraries after ffmpeg are what PySide6 needs to load its GUI and
+      # multimedia modules; the runner image doesn't ship libEGL.
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          ffmpeg libchromaprint-tools
+          libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0t64 libpulse0 libxrandr2
       - run: uv sync --locked
       - run: uv run pytest -q
 
@@ -39,6 +44,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      # Same Qt libraries as the test job (22.04 names), so the tests can import PySide6.
+      - name: Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: >-
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0 libpulse0 libxrandr2
       - run: uv sync --locked
       # Static fpcalc (song matching), shipped inside the app.
       - run: uv run python -m clickwheel.tools fetch-fpcalc
