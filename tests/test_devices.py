@@ -336,3 +336,35 @@ def test_shuffle_repairs_stale_itunessd_and_delete_cleans_mapping(library, tmp_p
     caplog.clear()
     assert backend.sync(library.root).ok
     assert "stale" not in caplog.text
+
+
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="fakes macOS paths")
+def test_macos_uses_diskutils_spelling_of_accented_volume_names(monkeypatch):
+    import plistlib
+    import subprocess
+    import sys
+    import unicodedata
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from clickwheel import devices
+
+    composed = "/Volumes/OWNER é╟ IP"
+    decomposed = unicodedata.normalize("NFD", composed)
+    assert composed != decomposed
+    reported = {"MountPoint": decomposed}
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(devices, "mount_unmounted_ipods", lambda: [])
+    monkeypatch.setattr(devices.psutil, "disk_partitions", lambda all=False: [
+        SimpleNamespace(mountpoint=composed), SimpleNamespace(mountpoint="/Volumes/PLAIN")])
+    asked = []
+    monkeypatch.setattr(devices.subprocess, "run", lambda cmd, **kw: asked.append(cmd[-1]) or
+                        subprocess.CompletedProcess(cmd, 0, plistlib.dumps(reported), b""))
+    monkeypatch.setattr(devices, "identify", lambda path: devices.Device(path, "iPod", "Shuffle", "apple", True))
+
+    assert [d.path for d in devices.scan()] == [Path(decomposed), Path("/Volumes/PLAIN")]
+    assert asked == [composed]  # plain names don't need asking
+
+    # A different volume altogether keeps pyPodLib's safety check in play.
+    reported["MountPoint"] = "/"
+    assert devices.macos_mount_point(Path(composed)) == Path(composed)
