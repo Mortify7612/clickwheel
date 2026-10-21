@@ -1,8 +1,7 @@
-"""Self-update from the public releases repo.
+"""Self-update from this repo's GitHub releases.
 
-Releases live in a separate public repo (the source repo is private), each
-with one installer per platform plus ``SHA256SUMS.txt``. Updating a frozen
-app works by downloading and verifying the new build, unpacking it next to the
+Each release carries one package per platform plus ``SHA256SUMS.txt``. Updating
+a frozen app works by downloading and verifying the new build, unpacking it next to the
 installed one, and handing off to a tiny script that waits for this process to
 exit, swaps the folders/bundle, and relaunches.
 """
@@ -28,7 +27,7 @@ import requests
 
 from ._version import __version__
 
-RELEASES_REPO = "Mortify7612/clickwheel-releases"
+RELEASES_REPO = "Mortify7612/clickwheel"
 LATEST_API = f"https://api.github.com/repos/{RELEASES_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{RELEASES_REPO}/releases/latest"
 CHECKSUMS = "SHA256SUMS.txt"

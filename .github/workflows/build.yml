@@ -1,8 +1,8 @@
 name: Build
 
 # Tests run on every push. Installers are built on demand (Actions tab ->
-# Build -> Run workflow) or when a version tag like v0.2.0 is pushed, since
-# macOS runner minutes are billed at 10x on private repos.
+# Build -> Run workflow) or when a version tag like v0.2.0 is pushed, which
+# also publishes them as a GitHub release.
 on:
   push:
     branches: [master]
@@ -115,20 +115,14 @@ jobs:
             Clickwheel-*.AppImage
           if-no-files-found: error
 
-  # Installers go to the public releases repo (the source repo is private) so the
-  # app's built-in updater can download them without a GitHub login.
-  # Requires secret RELEASES_TOKEN: fine-grained token with Contents read/write
-  # on Mortify7612/clickwheel-releases only.
+  # The app's built-in updater reads this repo's latest release.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Check token
-        env:
-          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-        run: |
-          [ -n "$RELEASES_TOKEN" ] || { echo "::error::Add the RELEASES_TOKEN secret (see workflow comment)"; exit 1; }
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -145,8 +139,6 @@ jobs:
         run: sha256sum Clickwheel-* > SHA256SUMS.txt && cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
-          repository: Mortify7612/clickwheel-releases
-          token: ${{ secrets.RELEASES_TOKEN }}
           tag_name: ${{ github.ref_name }}
           name: Clickwheel ${{ github.ref_name }}
           body_path: notes.md
