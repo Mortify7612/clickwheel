@@ -204,6 +204,10 @@ def _safari_store(path) -> None:
     path.write_bytes(b"cook" + struct.pack(">II", 1, len(page)) + page + b"\0" * 8)
 
 
+# Fakes a macOS home through $HOME, which Windows ignores; the macOS runners cover it.
+mac_only = pytest.mark.skipif(sys.platform == "win32", reason="fakes a macOS home directory")
+
+
 @pytest.fixture
 def mac_home(store, tmp_path, monkeypatch):
     import yt_dlp.cookies
@@ -229,6 +233,7 @@ def mac_home(store, tmp_path, monkeypatch):
     return keychain
 
 
+@mac_only
 @pytest.mark.parametrize("browser", [*MAC_CHROMIUM, "firefox", "safari"])
 def test_every_browser_signs_in_on_macos(mac_home, browser):
     profile = auth.sign_in_from_browser(browser)
@@ -238,6 +243,7 @@ def test_every_browser_signs_in_on_macos(mac_home, browser):
     assert mac_home["asked"] == ([MAC_CHROMIUM[browser][1]] if browser in MAC_CHROMIUM else [])
 
 
+@mac_only
 def test_keychain_refusal_and_missing_browser_on_macos(mac_home, tmp_path):
     mac_home["allow"] = False
     with pytest.raises(auth.AuthError, match="Always Allow"):
