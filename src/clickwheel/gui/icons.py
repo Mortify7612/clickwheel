@@ -10,6 +10,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 
 SCALE = 2
+EQ_FADERS = ((6, 15), (12, 8), (18, 12))  # x, knob height of the equalizer glyph
 
 
 def _poly(*points: tuple[float, float]) -> QPolygonF:
@@ -114,6 +115,14 @@ def _draw(p: QPainter, name: str) -> None:
     elif name == "back":
         p.setBrush(Qt.NoBrush)
         p.drawPolyline(_poly((15, 5), (8, 12), (15, 19)))
+    elif name == "eq":  # three faders at different levels
+        color = p.pen().color()
+        p.setPen(QPen(color, 1.5, Qt.SolidLine, Qt.RoundCap))
+        for x, _knob in EQ_FADERS:
+            p.drawLine(QPointF(x, 4), QPointF(x, 20))
+        p.setPen(Qt.NoPen)
+        for x, knob in EQ_FADERS:
+            p.drawRoundedRect(QRectF(x - 2.8, knob - 2, 5.6, 4), 1.2, 1.2)
     elif name == "more":
         p.setPen(Qt.NoPen)
         for x in (6, 12, 18):

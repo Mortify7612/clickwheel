@@ -1,4 +1,9 @@
-"""Local playback with a live spectrum for the LCD level meter."""
+"""Local playback with a live spectrum for the LCD level meter, and an optional equalizer.
+
+Without the equalizer Qt plays the file itself. With it, Qt only decodes: the
+audio comes back block by block, goes through the equalizer and is queued to
+the sound card through a QAudioSink.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +12,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QUrl, Signal
-from PySide6.QtMultimedia import QAudioBuffer, QAudioBufferOutput, QAudioFormat, QAudioOutput, QMediaPlayer
+from PySide6.QtCore import QObject, QTimer, QUrl, Signal
+from PySide6.QtMultimedia import (
+    QAudioBuffer, QAudioBufferOutput, QAudioFormat, QAudioOutput, QAudioSink, QMediaDevices, QMediaPlayer,
+)
+
+from ..equalizer import Equalizer
 
 FFT_SIZE = 2048
+SINK_SECONDS = 0.2  # equalized audio waiting in the sound card's buffer
+# Qt decodes by the system clock and the sound card plays by its own; if decoding runs
+# ahead by more than this, the excess is dropped (a few milliseconds every few hours).
+BACKLOG_SECONDS = 0.3
 _DTYPES = {
     QAudioFormat.SampleFormat.UInt8: (np.uint8, lambda a: (a.astype(np.float32) - 128) / 128),
     QAudioFormat.SampleFormat.Int16: (np.int16, lambda a: a.astype(np.float32) / 32768),
@@ -66,18 +79,25 @@ class SpectrumAnalyzer:
         return levels
 
 
-def buffer_to_mono(buffer: QAudioBuffer) -> tuple[np.ndarray, int] | None:
+def buffer_to_frames(buffer: QAudioBuffer) -> tuple[np.ndarray, int] | None:
+    """The buffer as float32 ``(frames, channels)`` in -1..1, and its sample rate."""
     fmt = buffer.format()
     kind = _DTYPES.get(fmt.sampleFormat())
     data = buffer.constData()
-    if kind is None or data is None or not fmt.channelCount():
+    channels = fmt.channelCount()
+    if kind is None or data is None or not channels:
         return None
     dtype, scale = kind
     samples = scale(np.frombuffer(bytes(data), dtype=dtype))
-    channels = fmt.channelCount()
-    if channels > 1:
-        samples = samples[: len(samples) // channels * channels].reshape(-1, channels).mean(axis=1)
-    return samples, fmt.sampleRate()
+    return samples[: len(samples) // channels * channels].reshape(-1, channels), fmt.sampleRate()
+
+
+def buffer_to_mono(buffer: QAudioBuffer) -> tuple[np.ndarray, int] | None:
+    converted = buffer_to_frames(buffer)
+    if converted is None:
+        return None
+    frames, rate = converted
+    return frames.mean(axis=1), rate
 
 
 class Player(QObject):
@@ -86,6 +106,7 @@ class Player(QObject):
     position_changed = Signal(int, int)   # position ms, duration ms
     spectrum = Signal(list)               # band levels 0..1
     error = Signal(str)
+    equalizer_failed = Signal(str)        # the sound device can't take the equalized audio; it's off again
 
     def __init__(self, bands: int, parent=None):
         super().__init__(parent)
@@ -102,6 +123,15 @@ class Player(QObject):
         self.repeat = False
         self._resume_at: int | None = None  # restored position, applied once the song has loaded
         self._resume_duration = 0
+        self.equalizer = Equalizer()
+        self._eq_on = False
+        self._sink: QAudioSink | None = None
+        self._sink_io = None
+        self._sink_shape: tuple[int, int] | None = None  # (rate, channels) it was opened for
+        self._sink_float = True
+        self._frame_bytes = 8
+        self._backlog = bytearray()  # equalized audio the sink had no room for yet
+        self._feeder = QTimer(self, interval=10, timeout=self._feed_sink)
         self.set_volume(0.7)
 
         self._buffers.audioBufferReceived.connect(self._on_buffer)
@@ -140,13 +170,16 @@ class Player(QObject):
         if self._queue:
             self._reorder(first=current)
 
-    def _load_current(self) -> None:
+    def _load_current(self, flush: bool = True) -> None:
+        """``flush=False`` when one song runs into the next, so the end of the last one still plays."""
         item = self.current
         if item is None:
             self.stop()
             return
         self._resume_at = None
         self._analyzer.reset()
+        if flush:
+            self._flush_sink()
         self._player.setSource(QUrl.fromLocalFile(str(item.path)))
         self._player.play()
         self.track_changed.emit(item)
@@ -206,6 +239,7 @@ class Player(QObject):
 
     def stop(self) -> None:
         self._player.stop()
+        self._flush_sink()
         self.spectrum.emit([0.0] * self._analyzer.bands)
 
     def next(self, *, auto: bool = False) -> None:
@@ -223,7 +257,7 @@ class Player(QObject):
                 self._player.setPosition(0)
                 return
             self._pos = len(self._order) - 1
-        self._load_current()
+        self._load_current(flush=not auto)
 
     def previous(self) -> None:
         if not self._order:
@@ -231,6 +265,7 @@ class Player(QObject):
         # Like most players: restart the song unless we're right at its start.
         if self._player.position() > 3000 or self._pos == 0:
             self._player.setPosition(0)
+            self._flush_sink()
             if self._player.playbackState() != QMediaPlayer.PlayingState:
                 self._player.play()
             return
@@ -242,9 +277,12 @@ class Player(QObject):
             self._resume_at = ms
             return
         self._player.setPosition(ms)
+        self._flush_sink()
 
     def set_volume(self, fraction: float) -> None:
         self._output.setVolume(max(0.0, min(1.0, fraction)))
+        if self._sink is not None:
+            self._sink.setVolume(self._output.volume())
 
     @property
     def volume(self) -> float:
@@ -254,16 +292,114 @@ class Player(QObject):
     def is_playing(self) -> bool:
         return self._player.playbackState() == QMediaPlayer.PlayingState
 
+    # ── Equalizer ────────────────────────────────────────────────────────
+
+    @property
+    def equalizer_on(self) -> bool:
+        return self._eq_on
+
+    def set_equalizer(self, enabled: bool, gains, preamp_db: float) -> None:
+        self.equalizer.set(gains, preamp_db)
+        if enabled == self._eq_on:
+            return
+        self._eq_on = enabled
+        if enabled:
+            self._player.setAudioOutput(None)  # Qt now only decodes; _on_buffer plays the result
+        else:
+            self._close_sink()
+            self.equalizer.reset()
+            self._player.setAudioOutput(self._output)
+
+    def _give_up_equalizer(self, message: str) -> None:
+        self.set_equalizer(False, self.equalizer.gains, self.equalizer.preamp)
+        self.equalizer_failed.emit(message)
+
+    def _open_sink(self, rate: int, channels: int) -> bool:
+        self._close_sink()
+        device = QMediaDevices.defaultAudioOutput()
+        fmt = QAudioFormat()
+        fmt.setSampleRate(rate)
+        fmt.setChannelCount(channels)
+        fmt.setSampleFormat(QAudioFormat.SampleFormat.Float)
+        self._sink_float = device.isFormatSupported(fmt)
+        if not self._sink_float:
+            fmt.setSampleFormat(QAudioFormat.SampleFormat.Int16)
+            if not device.isFormatSupported(fmt):
+                self._give_up_equalizer(f"{device.description() or 'The sound device'} can't play through the "
+                                        "equalizer, so it's off.")
+                return False
+        self._frame_bytes = channels * (4 if self._sink_float else 2)
+        self._sink = QAudioSink(device, fmt, self)
+        self._sink.setBufferSize(int(rate * SINK_SECONDS) * self._frame_bytes)
+        self._sink.setVolume(self._output.volume())
+        self._sink_io = self._sink.start()
+        self._sink_shape = (rate, channels)
+        self._feeder.start()
+        return True
+
+    def _close_sink(self) -> None:
+        self._feeder.stop()
+        self._backlog.clear()
+        if self._sink is not None:
+            self._sink.stop()
+            self._sink.deleteLater()
+        self._sink, self._sink_io, self._sink_shape = None, None, None
+
+    def _flush_sink(self) -> None:
+        """Drop queued audio that's no longer wanted (after a seek, a skip or a stop)."""
+        self._backlog.clear()
+        self.equalizer.reset()
+        if self._sink is not None:
+            self._sink.reset()
+            self._sink_io = self._sink.start()
+
+    def _queue_audio(self, frames: np.ndarray, rate: int) -> None:
+        if (rate, frames.shape[1]) != self._sink_shape and not self._open_sink(rate, frames.shape[1]):
+            return
+        if self._sink_float:
+            self._backlog += frames.astype("<f4", copy=False).tobytes()
+        else:
+            self._backlog += (frames * 32767).astype("<i2").tobytes()
+        limit = int(rate * BACKLOG_SECONDS) * self._frame_bytes
+        if len(self._backlog) > limit:
+            del self._backlog[:len(self._backlog) - limit]
+        self._feed_sink()
+
+    def _feed_sink(self) -> None:
+        # (Polled here: PySide can't pass QAudioSink.stateChanged's argument to Python.)
+        if self._sink is not None and self._sink.error().name in ("OpenError", "FatalError"):
+            self._give_up_equalizer("The sound device stopped taking the equalized audio, so the equalizer is off.")
+            return
+        if self._sink_io is None or not self._backlog:
+            return
+        room = min(self._sink.bytesFree(), len(self._backlog)) // self._frame_bytes * self._frame_bytes
+        if room > 0:
+            written = self._sink_io.write(bytes(self._backlog[:room]))
+            if written > 0:
+                del self._backlog[:written]
+
     # ── Qt callbacks ─────────────────────────────────────────────────────
 
     def _on_buffer(self, buffer: QAudioBuffer) -> None:
-        if not self.is_playing:
-            return
-        converted = buffer_to_mono(buffer)
-        if converted is not None:
+        if self._eq_on:
+            converted = buffer_to_frames(buffer)
+            if converted is None:
+                return
+            frames, rate = converted
+            frames = np.clip(self.equalizer.process(frames, rate), -1.0, 1.0)
+            self._queue_audio(frames, rate)
+            if not self.is_playing:
+                return
+            samples = frames.mean(axis=1)
+        else:
+            if not self.is_playing:
+                return
+            converted = buffer_to_mono(buffer)
+            if converted is None:
+                return
             samples, rate = converted
-            # Apply the output volume so the meter matches what you hear.
-            self.spectrum.emit(self._analyzer.feed(samples * self._output.volume(), rate))
+        # Apply the output volume so the meter matches what you hear.
+        self.spectrum.emit(self._analyzer.feed(samples * self._output.volume(), rate))
 
     def _on_status(self, status) -> None:
         if status == QMediaPlayer.LoadedMedia and self._resume_at is not None:
@@ -279,6 +415,11 @@ class Player(QObject):
 
     def _on_state(self, state) -> None:
         name = {QMediaPlayer.PlayingState: "playing", QMediaPlayer.PausedState: "paused"}.get(state, "stopped")
+        if self._sink is not None:  # hold what's queued while paused, so it carries on seamlessly
+            if name == "paused":
+                self._sink.suspend()
+            elif name == "playing" and self._sink.state().name == "SuspendedState":
+                self._sink.resume()
         if name != "playing":
             self.spectrum.emit([0.0] * self._analyzer.bands)
         self.state_changed.emit(name)

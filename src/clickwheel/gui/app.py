@@ -18,6 +18,7 @@ from .._version import __version__
 from ..config import APP_NAME, DB_FILE, PLAYBACK_FILE, Settings
 from ..library import Library
 from .device_page import DevicePage
+from .eq_panel import EqPanel
 from .fonts import load_fonts
 from .lcd import BARS, LcdDisplay
 from .player import Player
@@ -134,6 +135,7 @@ class MainWindow(QMainWindow):
         self.lcd = LcdDisplay()
         self.player = Player(BARS, self)
         self.player_bar = PlayerBar(self.player)
+        self.eq_panel = EqPanel()
         central = Backdrop()  # bubbles and sparkles behind the glass panels (Y2K)
         column = QVBoxLayout(central)
         column.setContentsMargins(6, 4, 6, 6)
@@ -142,17 +144,19 @@ class MainWindow(QMainWindow):
         column.addWidget(self.title_bar)
         column.addWidget(self.lcd)
         column.addWidget(self.player_bar)
+        column.addWidget(self.eq_panel)
         column.addWidget(tabs, 1)
         self.setCentralWidget(central)
         self._tabs = tabs
         self._wire_lcd(status)
         # HUD corner brackets on the display, the deck and every panel (Halo skin only).
-        panels = [self.lcd, self.player_bar] + [
+        panels = [self.lcd, self.player_bar, self.eq_panel] + [
             w for w in self.findChildren(QAbstractItemView) + self.findChildren(QGroupBox)
             if not isinstance(w, QHeaderView) and w.window() is self]  # not combo-box popups
         self._hud = [HudBrackets(w) for w in panels]
         self.restyle()
         self._keep_playback()
+        self._wire_equalizer()
 
         def sync_songs(paths):
             tabs.setCurrentWidget(self.device_page)  # show progress where syncs live
@@ -198,6 +202,38 @@ class MainWindow(QMainWindow):
         self.title_bar.setVisible(is_retro())
         for brackets in self._hud:
             brackets.setVisible(current_theme() == "halo")
+
+    def _wire_equalizer(self) -> None:
+        s, panel, player = self.settings, self.eq_panel, self.player
+        try:
+            player.equalizer.set(s.eq_gains, s.eq_preamp)
+        except (TypeError, ValueError):  # a hand-edited or older settings file: start flat
+            s.eq_gains, s.eq_preamp, s.eq_preset = [0.0] * 10, 0.0, "Flat"
+        panel.set_values(s.eq_enabled, s.eq_gains, s.eq_preamp, s.eq_preset)
+        player.set_equalizer(s.eq_enabled, s.eq_gains, s.eq_preamp)
+        panel.setVisible(s.show_equalizer)
+        self.player_bar.eq_btn.setChecked(s.show_equalizer)
+        save = QTimer(self, singleShot=True, interval=600, timeout=s.save)  # once a drag settles
+
+        def edited():
+            player.set_equalizer(panel.enabled, panel.gains, panel.preamp)
+            s.eq_enabled, s.eq_gains, s.eq_preamp, s.eq_preset = panel.enabled, panel.gains, panel.preamp, panel.preset
+            save.start()
+
+        def shown(visible: bool):
+            panel.setVisible(visible)
+            s.show_equalizer = visible
+            save.start()
+
+        def failed(message: str):
+            panel.set_values(False, panel.gains, panel.preamp, panel.preset)
+            s.eq_enabled = False
+            save.start()
+            self.statusBar().showMessage(message, 10000)
+
+        panel.changed.connect(edited)
+        self.player_bar.equalizer_toggled.connect(shown)
+        player.equalizer_failed.connect(failed)
 
     def _wire_lcd(self, status) -> None:
         lcd = self.lcd
