@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer, Signal
-from PySide6.QtWidgets import QLabel, QPushButton
+from pathlib import Path
+
+from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton
 
 from ..config import Settings
 from ..devices import Device, scan_zune
 from ..library import Library
+from ..podcasts import Podcasts
+from ..video import MusicVideos
 from . import workers
 from .device_page import DevicePage, _gb
 
@@ -23,11 +27,14 @@ def battery_text(level: int | None) -> str:
 
 class ZunePage(DevicePage):
     present = Signal(bool)  # a Zune is plugged in (or was unplugged)
+    podcasts_changed = Signal()  # a sync brought back where episodes were left on the Zune
 
-    def __init__(self, library: Library, settings: Settings):
+    def __init__(self, library: Library, settings: Settings, podcasts: Podcasts, videos: MusicVideos):
         self.release_btn = None  # the base class shows the (empty) device before these exist
         self.battery = None
         self._present = False
+        self.podcasts = podcasts
+        self.videos = videos
         super().__init__(library, settings, noun="Zune")
         self.manual_btn.hide()  # an MTP player has no folder to point at
         self.eject_btn.hide()  # ...and nothing to flush: it's safe to unplug when idle
@@ -38,6 +45,14 @@ class ZunePage(DevicePage):
         self.release_btn.clicked.connect(self._release)
         self.release_btn.hide()
         self.info_form.addRow(self.release_btn)
+        self.videos_box = QCheckBox("Music videos (for the songs synced)")
+        self.videos_box.setToolTip("Get them on the Library tab: select songs, right-click, “Get music videos”")
+        self.podcasts_box = QCheckBox("Podcasts (downloaded episodes)")
+        self.videos_box.setChecked(settings.zune_sync_videos)
+        self.podcasts_box.setChecked(settings.zune_sync_podcasts)
+        for box, key in ((self.videos_box, "zune_sync_videos"), (self.podcasts_box, "zune_sync_podcasts")):
+            box.toggled.connect(lambda on, key=key: (setattr(settings, key, on), settings.save()))
+            self.what_layout.insertWidget(self.what_layout.count() - 1, box)  # above the note
 
     def _scan(self) -> list[Device]:
         dev = scan_zune()
@@ -94,3 +109,49 @@ class ZunePage(DevicePage):
         self.release_btn.setEnabled(False)
         QTimer.singleShot(3000, lambda: self.release_btn.setEnabled(True))
         workers.run(release_from_kde, on_done=done, on_error=lambda m: self._log(f"Release failed: {m}"))
+
+    # ── Videos and podcasts ──────────────────────────────────────────────
+
+    def _sync_extras(self, allowed: set[Path] | None) -> dict:
+        from ..devices.zune import EpisodeItem, VideoItem
+        from ..video import video_duration_ms
+
+        extras: dict = {}
+        if self.videos_box.isChecked():
+            tracks = {t.video_id: t for t in self.library.tracks()}
+            items = []
+            for video in self.videos.all():
+                track = tracks.get(video.track_id)
+                if track is None or (allowed is not None and self.library.root / track.relpath not in allowed):
+                    continue
+                path, thumb = self.videos.path(video), self.videos.thumb_path(video)
+                items.append(VideoItem(video.track_id, path, track.title, track.artist,
+                                       video_duration_ms(path) or track.duration * 1000,
+                                       thumb.read_bytes() if thumb.exists() else None))
+            extras["videos"] = items
+        if self.podcasts_box.isChecked():
+            shows = {p.id: p for p in self.podcasts.podcasts()}
+            items = []
+            for e in self.podcasts.episodes(downloaded=True):
+                show, path = shows.get(e.podcast_id), self.podcasts.path(e)
+                if show is None or not path.exists():
+                    continue
+                feed = show.source if show.kind == "rss" else f"https://music.youtube.com/playlist?list={show.source}"
+                items.append(EpisodeItem(e.id, path, show.title, e.title, author=show.author, feed_url=feed,
+                                         cover=self.podcasts.cover(show), description=e.description,
+                                         published=e.published, duration_ms=e.duration * 1000,
+                                         position_ms=e.position, played=e.played))
+            extras["episodes"] = items
+            extras["on_episode_state"] = self._episode_state
+        return extras
+
+    def _episode_state(self, key: str, position: int, finished: bool) -> None:
+        """Called from the sync thread: where an episode was left on the Zune."""
+        if finished:
+            self.podcasts.set_played(key)
+        else:
+            self.podcasts.set_position(key, position)
+
+    def _on_synced(self, summary) -> None:
+        super()._on_synced(summary)
+        self.podcasts_changed.emit()

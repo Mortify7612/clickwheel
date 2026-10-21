@@ -34,6 +34,9 @@ class Settings:
     check_for_updates: bool = True
     show_status_bar: bool = False  # the LCD ticker already shows status messages
     theme: str = "retro"  # "retro" | "y2k" | "bliss" | "aqua" | "halo" | "system"
+    # Zune tab: also sync music videos and downloaded podcast episodes.
+    zune_sync_videos: bool = True
+    zune_sync_podcasts: bool = True
     last_update_check: float = 0.0
 
     @classmethod

@@ -19,6 +19,7 @@ from pypodlib.sync import EngineOperation, EngineOptions, EngineRequest, SyncEng
 from pypodlib.sync import playlist_parser
 from pypodlib.sync.sync_executor import SyncExecutor
 
+from ..library import is_music_path
 from . import itunessd
 from ._session import is_read_only, on_device
 from .contents import ArtworkRef, DeviceContents, DevicePlaylist, DeviceTrack
@@ -157,7 +158,7 @@ LIBRARY_AUDIO = {".m4a", ".mp3", ".aac", ".wav"}
 
 def _library_files(root: Path) -> list[Path]:
     return [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in LIBRARY_AUDIO
-            and "Playlists" not in p.relative_to(root).parts]
+            and is_music_path(root, p)]
 
 
 def _loc(track) -> str:

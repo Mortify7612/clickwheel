@@ -25,6 +25,7 @@ from dataclasses import astuple, dataclass
 from pathlib import Path
 
 from ..config import DATA_DIR
+from ..library import is_music_path
 from . import mtp, mtpz
 from .apple import SyncSummary
 from .contents import DeviceContents, DevicePlaylist, DeviceTrack
@@ -43,7 +44,11 @@ AAC = 0xB903
 ALBUM = 0xBA03
 PLAYLIST = 0xBA05
 ARTIST = 0xB218
+WMV = 0xB981
+MP4 = 0xB982
+MEDIACAST = 0xBA0B  # a podcast show
 AUDIO = {MP3, WMA, M4A, AAC}
+VIDEO = {MP4, WMV}
 
 # Object properties (the 0xDAxx ones are Zune-specific)
 FORMAT = 0xDC02
@@ -61,6 +66,16 @@ USE_COUNT = 0xDC91
 ALBUM_NAME = 0xDC9A  # read-only on tracks: the Zune derives it from ALBUM_LINK
 ARTIST_LINK = 0xDAB9  # handle of the track's (or album's) artist object
 ALBUM_LINK = 0xDABB  # handle of the track's album object; set by the Zune
+SHOW_LINK = 0xDA9E  # handle of an episode's show; set by the Zune when the show lists it
+META_GENRE = 0xDC95
+DESCRIPTION = 0xDC48  # UTF-16 array
+URL_SOURCE = 0xDD60  # UTF-16 array: a show's feed URL
+TIME_BOOKMARK = 0xDD62  # where playback stopped, ms
+
+# Meta Genre picks the Zune's category for a new object (and is then cleared):
+META_MUSIC_VIDEO = 0x0023  # "music videos"; other videos are listed under "other"
+META_VIDEO = 0x0021
+META_PODCAST = 0x0040  # makes an audio object a podcast episode (objects 0x10xxxxxx)
 
 FRIENDLY_NAME = 0xD402  # device properties
 BATTERY_LEVEL = 0x5001  # percent
@@ -154,11 +169,52 @@ class Obj:
     plays: int = 0
     album_link: int = 0
     artist_link: int = 0
+    show_link: int = 0
 
 
 # Where each property lands in an ``Obj``.
 _ATTRS = {NAME: "name", ARTIST_NAME: "artist", ALBUM_NAME: "album", TRACK: "track", DURATION: "duration",
-          USE_COUNT: "plays", ALBUM_LINK: "album_link", ARTIST_LINK: "artist_link"}
+          USE_COUNT: "plays", ALBUM_LINK: "album_link", ARTIST_LINK: "artist_link", SHOW_LINK: "show_link"}
+
+
+def utf16_array(text: str) -> list[int]:
+    """Text as MTP's "array of UINT16" (UTF-16 code units, zero-terminated)."""
+    data = text.encode("utf-16-le")
+    return [int.from_bytes(data[i:i + 2], "little") for i in range(0, len(data), 2)] + [0]
+
+
+def _zune_date(timestamp: float) -> str:
+    return time.strftime("%Y%m%dT%H%M%S.0", time.localtime(timestamp)) if timestamp else ""
+
+
+@dataclass
+class VideoItem:
+    """A music video to put on the Zune."""
+
+    key: str  # the app's id for it (the library track id)
+    path: Path
+    title: str
+    artist: str
+    duration_ms: int = 0
+    thumbnail: bytes | None = None
+
+
+@dataclass
+class EpisodeItem:
+    """A downloaded podcast episode to put on the Zune."""
+
+    key: str  # the app's episode id
+    path: Path
+    show: str
+    title: str
+    author: str = ""
+    feed_url: str = ""
+    cover: bytes | None = None
+    description: str = ""
+    published: float = 0
+    duration_ms: int = 0
+    position_ms: int = 0  # where the app's own player left off
+    played: bool = False  # the app already counts it as finished
 
 # Reading one value costs the Zune about a millisecond, so a full read of a
 # full Zune takes ~20 s. Object handles survive replugs, so what was read is
@@ -259,7 +315,8 @@ class Zune:
 
     def _load(self) -> None:
         self.storage = self.dev.storage_ids()[0]
-        handles = set(self.dev.object_handles(0xFFFFFFFF, 0, 0))
+        # Podcast shows are left out of the full listing; they have to be asked for by format.
+        handles = set(self.dev.object_handles(0xFFFFFFFF, 0, 0)) | set(self.dev.object_handles(0xFFFFFFFF, MEDIACAST, 0))
         cached = self._read_cache()
         self.objects = {h: o for h, o in cached.items() if h in handles}
         new = handles - self.objects.keys()
@@ -295,11 +352,14 @@ class Zune:
                         fill(p.code, {p.handle: p.value})
             except mtp.MtpError:
                 pass
-        fill(NAME, self._query(NAME, ARTIST, ALBUM, PLAYLIST))
-        fill(ARTIST_NAME, self._query(ARTIST_NAME, ALBUM))
+        for handle in self.dev.object_handles(0xFFFFFFFF, MEDIACAST, 0):
+            objects.setdefault(handle, self._read_one(handle))
+        fill(NAME, self._query(NAME, ARTIST, ALBUM, PLAYLIST, *VIDEO))
+        fill(ARTIST_NAME, self._query(ARTIST_NAME, ALBUM, *VIDEO))
         for code in (DURATION, USE_COUNT, ALBUM_LINK):
-            fill(code, self._query(code, *AUDIO))
+            fill(code, self._query(code, *AUDIO, *(VIDEO if code != ALBUM_LINK else ())))
         fill(ARTIST_LINK, self._query(ARTIST_LINK, *AUDIO, ALBUM))
+        fill(SHOW_LINK, self._query(SHOW_LINK, *AUDIO, *VIDEO))
         return objects
 
     def _read_cache(self) -> dict[int, Obj]:
@@ -452,7 +512,9 @@ class Zune:
             self._forget(handle)
             removed += 1
         for album in albums - {0}:
-            if album in self.objects and not any(o.album_link == album for o in self.objects.values()):
+            # Both the cache and the Zune must agree it's empty before an album goes.
+            if album in self.objects and not any(o.album_link == album for o in self.objects.values()) \
+                    and not self.dev.references(album):
                 artists.add(self.objects[album].artist_link)
                 self._delete_object(album)
         used = {o.artist_link for o in self.objects.values()}
@@ -496,6 +558,109 @@ class Zune:
                 (FILE_NAME, mtp.STR, file_name), (NAME, mtp.STR, name)]), PLAYLIST, parent, file_name, name=name)
         self.dev.set_references(handle, tracks)
         return handle
+
+    # -- videos and podcasts ------------------------------------------------------------
+
+    def is_episode(self, handle: int) -> bool:
+        obj = self.objects.get(handle)
+        return obj is not None and (handle >> 24 == 0x10 or bool(obj.show_link))
+
+    def add_video(self, item: VideoItem, progress: Callable[[int, int], None] | None = None) -> int:
+        """A music video, listed under the Zune's "music videos" with its thumbnail."""
+        parent, file_name = self.folder("Videos"), safe_name(item.path.name)
+        handle = self.dev.send_object(self.storage, parent, MP4, [
+            (FILE_NAME, mtp.STR, file_name), (NAME, mtp.STR, item.title), (ARTIST_NAME, mtp.STR, item.artist),
+            (DURATION, mtp.UINT32, item.duration_ms), (META_GENRE, mtp.UINT16, META_MUSIC_VIDEO),
+        ], item.path.read_bytes(), progress)
+        self._add(handle, MP4, parent, file_name, name=item.title, artist=item.artist, duration=item.duration_ms)
+        if item.thumbnail:
+            self.dev.set_prop(handle, SAMPLE_FORMAT, mtp.UINT16, JPEG)
+            self.dev.set_prop(handle, SAMPLE_DATA, mtp.AUINT8, item.thumbnail)
+        return handle
+
+    def shows(self) -> dict[int, str]:
+        return {h: o.name for h, o in self.objects.items() if o.format == MEDIACAST}
+
+    def add_episode(self, item: EpisodeItem, progress: Callable[[int, int], None] | None = None) -> int:
+        """A podcast episode, listed under its show (created on first use).
+
+        The Meta Genre sent with it is what makes the Zune file it as an
+        episode; a show only accepts episodes, and a show left without any
+        disappears when the session ends.
+        """
+        suffix = item.path.suffix.lower()
+        fmt = {".mp3": MP3, ".m4a": M4A, ".aac": AAC, ".mp4": MP4, ".m4v": MP4}.get(suffix, M4A)
+        parent = self.folder("Podcasts", item.show)
+        file_name = safe_name(item.path.name)
+        props = [(FILE_NAME, mtp.STR, file_name), (NAME, mtp.STR, item.title),
+                 (ARTIST_NAME, mtp.STR, item.author or item.show), (DURATION, mtp.UINT32, item.duration_ms),
+                 (DESCRIPTION, mtp.AUINT16, utf16_array(item.description[:2000])),
+                 (META_GENRE, mtp.UINT16, META_PODCAST)]
+        if item.published:
+            props.append((DATE_AUTHORED, mtp.STR, _zune_date(item.published)))
+        if fmt != MP4:  # MP4 objects have no Genre property
+            props.append((GENRE, mtp.STR, "Podcast"))
+        handle = self.dev.send_object(self.storage, parent, fmt, props, item.path.read_bytes(), progress)
+        self._add(handle, fmt, parent, file_name, name=item.title, artist=item.author or item.show,
+                  duration=item.duration_ms)
+        show = self._show(item)
+        self.dev.set_references(show, [*self.dev.references(show), handle])
+        self.objects[handle].show_link = show
+        if item.position_ms:
+            self.dev.set_prop(handle, TIME_BOOKMARK, mtp.UINT32, item.position_ms)
+        return handle
+
+    def _show(self, item: EpisodeItem) -> int:
+        existing = next((h for h, name in self.shows().items() if name.casefold() == item.show.casefold()), None)
+        if existing is not None:
+            return existing
+        parent, file_name = self.folder("Podcasts"), f"{safe_name(item.show)}.pod"
+        props = [(FILE_NAME, mtp.STR, file_name), (NAME, mtp.STR, item.show),
+                 (ARTIST_NAME, mtp.STR, item.author or item.show)]
+        if item.feed_url:
+            props.append((URL_SOURCE, mtp.AUINT16, utf16_array(item.feed_url)))
+        handle = self._add(self.dev.send_object(self.storage, parent, MEDIACAST, props), MEDIACAST, parent,
+                           file_name, name=item.show, artist=item.author or item.show)
+        cover = zune_cover(item.cover) if item.cover else None
+        if cover:
+            self.dev.set_prop(handle, SAMPLE_FORMAT, mtp.UINT16, JPEG)
+            self.dev.set_prop(handle, SAMPLE_DATA, mtp.AUINT8, cover)
+        return handle
+
+    def episode_state(self, handle: int) -> tuple[int, bool]:
+        """(position ms, finished) as left by playing it on the Zune.
+
+        A finished episode has been played and its bookmark reset to 0; one
+        stopped partway keeps a bookmark.
+        """
+        try:
+            position = self.dev.get_prop(handle, TIME_BOOKMARK, mtp.UINT32) or 0
+            plays = self.dev.get_prop(handle, USE_COUNT, mtp.UINT32) or 0
+        except mtp.MtpError:
+            return 0, False
+        return position, plays > 0 and position == 0
+
+    def delete(self, handles: list[int]) -> int:
+        """Delete songs, videos and episodes, and whatever only they kept alive."""
+        songs = [h for h in handles if h in self.objects and self.objects[h].format in AUDIO and not self.is_episode(h)]
+        removed = self.delete_tracks(songs)
+        shows, folders = set(), set()
+        for handle in handles:
+            obj = self.objects.get(handle)
+            if obj is None or handle in songs or obj.format not in AUDIO | VIDEO:
+                continue
+            shows.add(obj.show_link)
+            folders.add(obj.parent)
+            self.dev.delete(handle)
+            self._forget(handle)
+            removed += 1
+        for show in shows - {0}:
+            # Ask the Zune, not the cache: deleting a show deletes its episodes too.
+            if show in self.objects and not self.dev.references(show):
+                self._delete_object(show)
+        for folder in folders:
+            self._prune(folder, None)
+        return removed
 
 
 # ── Backend used by the app ────────────────────────────────────────────────────
@@ -609,27 +774,44 @@ class ZuneSync:
 
     def browse(self) -> DeviceContents:
         with Zune.connect(write=False) as zune:
-            for handle, plays in zune._query(USE_COUNT, *AUDIO).items():  # the one thing the Zune changes itself
+            for handle, plays in zune._query(USE_COUNT, *AUDIO, *VIDEO).items():  # what the Zune changes itself
                 if handle in zune.objects and zune.objects[handle].plays != plays:
                     zune.objects[handle].plays = plays
                     zune._dirty = True
-            covers: dict[int, ZuneCover | None] = {}
-            tracks, index = [], {}
-            for h in sorted((h for h, o in zune.objects.items() if o.format in AUDIO), key=zune.path_of):
-                o = zune.objects[h]
-                if o.album_link and o.album_link not in covers:
+            images: dict[int, ZuneCover | None] = {}
+
+            def image(handle: int) -> ZuneCover | None:
+                if handle and handle not in images:
                     try:
-                        data = zune.dev.get_prop(o.album_link, SAMPLE_DATA, mtp.AUINT8)
+                        data = zune.dev.get_prop(handle, SAMPLE_DATA, mtp.AUINT8)
                     except mtp.MtpError:
                         data = b""
-                    covers[o.album_link] = ZuneCover(bytes(data)) if data else None
+                    images[handle] = ZuneCover(bytes(data)) if data else None
+                return images.get(handle)
+
+            tracks, index = [], {}
+            media = [h for h, o in zune.objects.items() if o.format in AUDIO | VIDEO]
+            for h in sorted(media, key=zune.path_of):
+                o = zune.objects[h]
+                if zune.is_episode(h):
+                    kind, art, album = "episode", image(o.show_link), zune.objects.get(o.show_link, o).name
+                elif o.format in VIDEO:
+                    kind, art, album = "video", image(h), ""
+                else:
+                    kind, art, album = "song", image(o.album_link), o.album
                 index[h] = len(tracks)
-                tracks.append(DeviceTrack(title=o.name or o.file_name, artist=o.artist, album=o.album,
+                tracks.append(DeviceTrack(title=o.name or o.file_name, artist=o.artist, album=album,
                                           track_number=o.track, duration=o.duration // 1000, play_count=o.plays,
-                                          location=zune.path_of(h), artwork=covers.get(o.album_link)))
+                                          location=zune.path_of(h), artwork=art, kind=kind))
             playlists = [DevicePlaylist(name, [index[t] for t in zune.dev.references(h) if t in index],
                                         zune.path_of(h))
                          for h, name in sorted(zune.playlists().items(), key=lambda kv: kv[1].casefold())]
+            videos = [index[h] for h in sorted(index, key=zune.path_of) if tracks[index[h]].kind == "video"]
+            if videos:
+                playlists.append(DevicePlaylist("Music videos", videos, "zune:videos", fixed=True))
+            for show, name in sorted(zune.shows().items(), key=lambda kv: kv[1].casefold()):
+                episodes = [index[e] for e in zune.dev.references(show) if e in index]
+                playlists.append(DevicePlaylist(f"Podcast: {name}", episodes, f"zune:show:{show}", fixed=True))
             self._refresh_status(zune)
             can_write = zune.can_write
         notice = "" if can_write else f"Read-only: add the MTPZ key file {mtpz.KEY_FILE} to change the Zune"
@@ -684,14 +866,22 @@ class ZuneSync:
         return summary
 
     def sync(self, library_root: Path, *, allowed: set[Path] | None = None, playlists: set[Path] | None = None,
-             progress: ProgressFn | None = None, cancelled: Callable[[], bool] | None = None) -> SyncSummary:
+             progress: ProgressFn | None = None, cancelled: Callable[[], bool] | None = None,
+             videos: list[VideoItem] | None = None, episodes: list[EpisodeItem] | None = None,
+             on_episode_state: Callable[[str, int, bool], None] | None = None) -> SyncSummary:
+        """Mirror the library's songs and playlists onto the Zune.
+
+        ``videos`` and ``episodes`` mirror those too (None leaves them as they
+        are). ``on_episode_state(key, position_ms, finished)`` reports where
+        each episode on the Zune was left, so the app can carry it over.
+        """
         progress = progress or (lambda *_: None)
         summary = SyncSummary()
         manifest = self._manifest()
         tracks: dict[str, dict] = manifest.setdefault("tracks", {})
         wanted = sorted(
             p for p in library_root.rglob("*.m4a")
-            if "Playlists" not in p.relative_to(library_root).parts
+            if is_music_path(library_root, p)
             and (allowed is None or p in allowed)
         )
         keep = {p.relative_to(library_root).as_posix() for p in wanted}
@@ -720,11 +910,77 @@ class ZuneSync:
 
                     progress("Writing playlists", 0, 0)
                     summary.playlists = self._sync_playlists(zune, library_root, playlists, manifest)
+                if videos is not None and not summary.errors:
+                    self._mirror(zune, "videos", videos, manifest, summary, progress, cancelled,
+                                 "Copying music videos", lambda item: zune.add_video(item))
+                if episodes is not None and not summary.errors:
+                    self._episode_states(zune, episodes, manifest, on_episode_state)
+                    self._mirror(zune, "episodes", episodes, manifest, summary, progress, cancelled,
+                                 "Copying podcasts", lambda item: zune.add_episode(item))
             finally:
                 self._save_manifest(manifest)
             self._refresh_status(zune)
         progress("Done", len(wanted), len(wanted))
         return summary
+
+    def _mirror(self, zune: Zune, kind: str, items: list, manifest: dict, summary: SyncSummary, progress,
+                cancelled, label: str, send) -> None:
+        """Make the Zune hold exactly ``items`` of this kind (of the ones Clickwheel sent)."""
+        sent: dict[str, dict] = manifest.setdefault(kind, {})
+        for i, item in enumerate(items):
+            if cancelled and cancelled():
+                summary.errors.append("Cancelled")
+                return
+            st = item.path.stat()
+            sig = [st.st_size, int(st.st_mtime)]
+            entry = sent.get(item.key)
+            existing = zune.find(entry["path"]) if entry else None
+            if entry and entry["sig"] == sig and existing:
+                continue
+            progress(f"{label} · {item.title}", i, len(items))
+            try:
+                if existing:
+                    zune.delete([existing])
+                handle = send(item)
+            except (OSError, mtp.MtpError) as exc:
+                summary.errors.append(f"{item.title}: {exc}")
+                continue
+            sent[item.key] = {"sig": sig, "path": zune.path_of(handle)}
+            summary.added += entry is None
+            summary.updated += entry is not None
+        if summary.errors:
+            return
+        wanted = {item.key for item in items}
+        gone = [key for key in sent if key not in wanted]
+        handles = [h for key in gone if (h := zune.find(sent[key]["path"])) is not None]
+        if handles:
+            progress(f"Removing {kind}", 0, len(handles))
+            zune.delete(handles)
+            summary.removed += len(handles)
+        for key in gone:
+            del sent[key]
+
+    @staticmethod
+    def _episode_states(zune: Zune, episodes: list[EpisodeItem], manifest: dict, report) -> None:
+        """Carry playback positions over: whichever side got further wins."""
+        sent = manifest.get("episodes", {})
+        for item in episodes:
+            entry = sent.get(item.key)
+            handle = zune.find(entry["path"]) if entry else None
+            if handle is None:
+                continue
+            position, finished = zune.episode_state(handle)
+            if finished or item.played:
+                if report and finished and not item.played:
+                    report(item.key, 0, True)
+            elif position > item.position_ms:
+                if report:
+                    report(item.key, position, False)
+            elif item.position_ms > position:
+                try:
+                    zune.dev.set_prop(handle, TIME_BOOKMARK, mtp.UINT32, item.position_ms)
+                except mtp.MtpError:
+                    pass
 
     def _sync_playlists(self, zune: Zune, library_root: Path, chosen: set[Path] | None, manifest: dict) -> int:
         tracks = manifest["tracks"]
@@ -752,18 +1008,24 @@ class ZuneSync:
         return len(written)
 
     def delete_tracks(self, locations: set[str]) -> int:
-        """Delete songs (device paths like "/Music/A/B/01 X.m4a"); the Zune drops them from playlists itself."""
+        """Delete songs, videos or episodes (device paths like "/Music/A/B/01 X.m4a").
+
+        The Zune drops them from playlists and shows itself.
+        """
         with Zune.connect() as zune:
-            removed = zune.delete_tracks([h for loc in locations if (h := zune.find(loc)) is not None])
+            removed = zune.delete([h for loc in locations if (h := zune.find(loc)) is not None])
             self._refresh_status(zune)
         manifest = self._manifest()
-        manifest["tracks"] = {rel: e for rel, e in manifest.get("tracks", {}).items() if e["path"] not in locations}
+        for kind in ("tracks", "videos", "episodes"):
+            manifest[kind] = {k: e for k, e in manifest.get(kind, {}).items() if e["path"] not in locations}
         self._save_manifest(manifest)
         return removed
 
     def reorder(self, playlist_id: str | None, locations: list[str]) -> None:
         if playlist_id is None:
             raise RuntimeError("The Zune sorts its own song list; reorder a playlist instead.")
+        if playlist_id.startswith("zune:"):
+            raise RuntimeError("The Zune keeps its videos and podcasts in its own order.")
         with Zune.connect() as zune:
             playlist = zune.find(playlist_id)
             if playlist is None:

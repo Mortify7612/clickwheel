@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS playlist_items (
 );
 """
 
+# Top-level library folders holding things other than songs; device music syncs skip them.
+NON_MUSIC_DIRS = {"Playlists", "Podcasts", "Music Videos"}
+
+
+def is_music_path(root: Path, path: Path) -> bool:
+    """Whether a file under the library root is a song (not a podcast, video or playlist)."""
+    parts = path.relative_to(root).parts
+    return "Playlists" not in parts and parts[0] not in NON_MUSIC_DIRS
+
 
 @dataclass
 class LibraryTrack:

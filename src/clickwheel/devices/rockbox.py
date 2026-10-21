@@ -8,6 +8,7 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 
+from ..library import is_music_path
 from .apple import SyncSummary
 from .contents import DeviceContents, DevicePlaylist, DeviceTrack
 
@@ -112,7 +113,7 @@ class RockboxSync:
 
         wanted = sorted(
             p for p in library_root.rglob("*.m4a")
-            if "Playlists" not in p.relative_to(library_root).parts
+            if is_music_path(library_root, p)
             and (allowed is None or p in allowed)
         )
         new_tracks: dict[str, list] = {}

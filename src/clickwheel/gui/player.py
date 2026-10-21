@@ -101,6 +101,7 @@ class Player(QObject):
         self.shuffle = False
         self.repeat = False
         self._resume_at: int | None = None  # restored position, applied once the song has loaded
+        self._start_at: int | None = None  # play from here once loaded (a podcast episode's place)
         self._resume_duration = 0
         self.set_volume(0.7)
 
@@ -116,12 +117,14 @@ class Player(QObject):
     def current(self) -> PlayItem | None:
         return self._queue[self._order[self._pos]] if 0 <= self._pos < len(self._order) else None
 
-    def play_queue(self, items: list[PlayItem], start: int = 0) -> None:
+    def play_queue(self, items: list[PlayItem], start: int = 0, position: int = 0) -> None:
+        """Play ``items`` from ``start``, ``position`` ms into it (to resume an episode)."""
         if not items:
             return
         self._queue = list(items)
         self._reorder(first=start)
         self._load_current()
+        self._start_at = position or None
 
     def _reorder(self, first: int) -> None:
         indices = list(range(len(self._queue)))
@@ -145,7 +148,7 @@ class Player(QObject):
         if item is None:
             self.stop()
             return
-        self._resume_at = None
+        self._resume_at = self._start_at = None
         self._analyzer.reset()
         self._player.setSource(QUrl.fromLocalFile(str(item.path)))
         self._player.play()
@@ -270,6 +273,9 @@ class Player(QObject):
             # A restored song: hold it paused where it was.
             position, self._resume_at = self._resume_at, None
             self._player.pause()
+            self._player.setPosition(position)
+        elif status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia) and self._start_at is not None:
+            position, self._start_at = self._start_at, None
             self._player.setPosition(position)
         elif status == QMediaPlayer.EndOfMedia:
             self.next(auto=True)

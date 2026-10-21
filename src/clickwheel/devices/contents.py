@@ -48,6 +48,7 @@ class DeviceTrack:
     # Apple firmware keeps art in ArtworkDB (pyPodLib strips it from the copied
     # files); Rockbox reads art embedded in the file at ``location``.
     artwork: ArtworkRef | None = None
+    kind: str = "song"  # "song" | "video" | "episode" (a Zune also holds music videos and podcasts)
 
 
 @dataclass
@@ -55,6 +56,7 @@ class DevicePlaylist:
     name: str
     track_indices: list[int] = field(default_factory=list)
     id: str = ""  # backend-specific: Apple playlist id, Rockbox .m3u8 file name
+    fixed: bool = False  # a list the device keeps in its own order (a Zune's videos, a podcast show)
 
 
 @dataclass

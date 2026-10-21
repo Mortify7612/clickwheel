@@ -67,7 +67,7 @@ class DevicePage(QWidget):
         form.addRow(self.ro_warning)
 
         what = QGroupBox("What to sync")
-        wv = QVBoxLayout(what)
+        wv = self.what_layout = QVBoxLayout(what)
         self.all_radio = QRadioButton("Entire library")
         self.some_radio = QRadioButton("Only these playlists / albums:")
         self.all_radio.setChecked(True)
@@ -260,8 +260,14 @@ class DevicePage(QWidget):
         if allowed is not None and not allowed:
             QMessageBox.information(self, "Nothing selected", "Tick at least one playlist or album.")
             return
+        extras = self._sync_extras(allowed)
         self._start_sync(dev, f"Syncing to {dev.label}…",
-                         lambda b, **kw: b.sync(self.library.root, allowed=allowed, playlists=playlists, **kw))
+                         lambda b, **kw: b.sync(self.library.root, allowed=allowed, playlists=playlists,
+                                                **extras, **kw))
+
+    def _sync_extras(self, allowed: set[Path] | None) -> dict:
+        """More keyword arguments for this device type's ``sync`` (none for an iPod)."""
+        return {}
 
     def sync_songs(self, paths: list[Path]) -> None:
         """Add just these library files to the current device (nothing is removed)."""

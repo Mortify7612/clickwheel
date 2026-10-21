@@ -33,9 +33,18 @@ class FakeZune:
             self._new(FOLDER, 0, {FILE_NAME: name})
 
     def _new(self, fmt: int, parent: int, props: dict) -> int:
+        # Like a Zune: the top byte of a handle is the object's category, which
+        # (for audio) the Meta Genre sent at creation decides, and is then cleared.
         self.next_handle += 1
-        self.objects[self.next_handle] = {FORMAT: fmt, PARENT: parent, **props}
-        return self.next_handle
+        category = 0x05 if fmt == FOLDER else 0x02 if fmt in zune.VIDEO else 0x0F if fmt == zune.MEDIACAST else \
+            0x08 if fmt == ARTIST else 0x06 if fmt == ALBUM else 0x0A if fmt == PLAYLIST else 0x01
+        if fmt in zune.AUDIO and props.get(zune.META_GENRE) == zune.META_PODCAST:
+            category = 0x10
+        if fmt in zune.AUDIO:
+            props.pop(zune.META_GENRE, None)
+        handle = (category << 24) | self.next_handle
+        self.objects[handle] = {FORMAT: fmt, PARENT: parent, **props}
+        return handle
 
     def root(self, name: str) -> int:
         return next(h for h, p in self.objects.items() if p[PARENT] == 0 and p.get(FILE_NAME) == name)
@@ -45,7 +54,9 @@ class FakeZune:
         pass
 
     def close(self):
-        pass
+        # A podcast show left without episodes is gone when the session ends.
+        for handle in [h for h, p in self.objects.items() if p[FORMAT] == zune.MEDIACAST and not self.refs.get(h)]:
+            del self.objects[handle]
 
     def storage_ids(self):
         return [0x10001]
@@ -58,7 +69,9 @@ class FakeZune:
         return 10**9 - used, 10**9
 
     def object_handles(self, storage=0xFFFFFFFF, fmt=0, parent=0):
-        return list(self.objects)
+        if fmt == 0:  # shows are left out of the full listing
+            return [h for h, p in self.objects.items() if p[FORMAT] != zune.MEDIACAST]
+        return [h for h, p in self.objects.items() if p[FORMAT] == fmt]
 
     def prop_list(self, handle=0xFFFFFFFF, code=0xFFFFFFFF, fmt=0, depth=0, group=0):
         self.calls.append(("prop_list", handle, code, fmt, group))
@@ -96,6 +109,9 @@ class FakeZune:
         return handle
 
     def delete(self, handle):
+        if self.objects[handle][FORMAT] == zune.MEDIACAST:  # a Zune deletes a show's episodes with it
+            for episode in self.refs.pop(handle, []):
+                self.delete(episode)
         del self.objects[handle]
         self.data.pop(handle, None)
         for refs in self.refs.values():  # the Zune drops deleted tracks from albums and playlists
@@ -106,6 +122,11 @@ class FakeZune:
         return list(self.refs.get(handle, []))
 
     def set_references(self, handle, refs):
+        if self.objects[handle][FORMAT] == zune.MEDIACAST:
+            if any(r >> 24 not in (0x10, 0x02) for r in refs):
+                raise mtp.MtpError("not an episode", 0xA804)
+            for episode in refs:
+                self.objects[episode][zune.SHOW_LINK] = handle
         self.refs[handle] = list(refs)
         if self.objects[handle][FORMAT] == ALBUM:
             for track in refs:
@@ -305,11 +326,11 @@ def test_object_cache_avoids_rereading_the_zune(library, fake):
     assert not [c for c in fake.calls if c[0] == "prop_list"]  # nothing new: no metadata reads at all
 
     # An object added behind Clickwheel's back is read on its own.
-    fake._new(FOLDER, fake.root("Music"), {FILE_NAME: "New"})
+    added = fake._new(FOLDER, fake.root("Music"), {FILE_NAME: "New"})
     fake.calls.clear()
     with zune.Zune.connect() as third:
         assert third.find("/Music/New") is not None
-    assert [c[1] for c in fake.calls] == [max(fake.objects)]
+    assert [c[1] for c in fake.calls] == [added]
 
 
 def test_writing_needs_keys_but_browsing_does_not(library, fake, monkeypatch):
@@ -359,3 +380,114 @@ def test_battery_label():
     assert battery_text(None) == "—"
     assert battery_text(57) == "57%"
     assert battery_text(9) == "9% — low, charge it soon"
+
+
+# ── Music videos and podcasts ────────────────────────────────────────────────────
+
+def _file(tmp_path, name, data=b"media"):
+    path = tmp_path / "media" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return path
+
+
+def _episodes(tmp_path):
+    from .conftest import make_cover
+
+    cover = make_cover()
+    return [
+        zune.EpisodeItem("talk|2", _file(tmp_path, "2026-10-15 Two.mp3"), "Test Talk", "Two", author="Ada",
+                         feed_url="https://example.com/feed.xml", cover=cover, description="Second.",
+                         published=1_760_000_000, duration_ms=60_000),
+        zune.EpisodeItem("talk|1", _file(tmp_path, "2026-10-01 One.m4a"), "Test Talk", "One", author="Ada",
+                         description="First.", published=1_759_000_000, duration_ms=30_000, position_ms=12_000),
+        zune.EpisodeItem("tube|v", _file(tmp_path, "Special.mp4"), "Tube Show", "Video special", duration_ms=5_000),
+    ]
+
+
+def test_music_videos(library, fake, tmp_path):
+    item = zune.VideoItem("trk1", _file(tmp_path, "Toxicity.mp4"), "Toxicity", "System Of A Down", 224_000,
+                          thumbnail=b"\xff\xd8thumb")
+    summary = backend().sync(library.root, videos=[item])
+    assert summary.ok and summary.added == 4  # three songs and the video
+    (video,) = fake.of_format(zune.MP4)
+    props = fake.objects[video]
+    assert fake.path(video) == "/Videos/Toxicity.mp4" and video >> 24 == 0x02
+    assert props[zune.META_GENRE] == zune.META_MUSIC_VIDEO  # listed under "music videos"
+    assert props[SAMPLE_DATA] == b"\xff\xd8thumb" and props[NAME] == "Toxicity"
+
+    assert backend().sync(library.root, videos=[item]).added == 0
+    assert backend().sync(library.root).removed == 0  # None leaves videos alone
+    assert video in fake.objects
+    assert backend().sync(library.root, videos=[]).removed == 1
+    assert not fake.of_format(zune.MP4) and not any(fake.path(h) == "/Videos" for h in fake.objects)
+
+
+def test_podcasts(library, fake, tmp_path):
+    states = []
+    items = _episodes(tmp_path)
+    summary = backend().sync(library.root, episodes=items, on_episode_state=lambda *a: states.append(a))
+    assert summary.ok and summary.added == 6
+
+    shows = {p[NAME]: h for h, p in fake.of_format(zune.MEDIACAST).items()}
+    assert set(shows) == {"Test Talk", "Tube Show"}
+    talk = shows["Test Talk"]
+    assert fake.path(talk) == "/Podcasts/Test Talk.pod"
+    assert fake.objects[talk][zune.URL_SOURCE] == zune.utf16_array("https://example.com/feed.xml")
+    assert fake.objects[talk][SAMPLE_DATA][:2] == b"\xff\xd8"
+    episodes = {fake.objects[h][NAME]: h for h in fake.references(talk)}
+    assert set(episodes) == {"One", "Two"}
+    two = episodes["Two"]
+    assert two >> 24 == 0x10 and fake.objects[two][zune.SHOW_LINK] == talk  # filed as an episode of the show
+    assert fake.path(two) == "/Podcasts/Test Talk/2026-10-15 Two.mp3"
+    assert fake.objects[two][zune.DESCRIPTION] == zune.utf16_array("Second.")
+    assert fake.objects[two][zune.GENRE] == "Podcast" and fake.objects[two][zune.DATE_AUTHORED].startswith("2025")
+    assert fake.objects[episodes["One"]][zune.TIME_BOOKMARK] == 12_000  # the app's place carried over
+    (special,) = fake.references(shows["Tube Show"])
+    assert special >> 24 == 0x02 and zune.GENRE not in fake.objects[special]  # MP4 has no Genre
+    assert states == []
+
+    # Listened on the Zune: Two finished, One further along.
+    fake.objects[two][zune.USE_COUNT] = 1
+    fake.objects[two][zune.TIME_BOOKMARK] = 0
+    fake.objects[episodes["One"]][zune.TIME_BOOKMARK] = 20_000
+    backend().sync(library.root, episodes=items, on_episode_state=lambda *a: states.append(a))
+    assert sorted(states) == [("talk|1", 20_000, False), ("talk|2", 0, True)]
+    # ...and the app further along than the Zune: the Zune is moved forward.
+    items[0].played = True  # what the app recorded from the last sync
+    items[1].position_ms = 25_000
+    states.clear()
+    backend().sync(library.root, episodes=items, on_episode_state=lambda *a: states.append(a))
+    assert states == [] and fake.objects[episodes["One"]][zune.TIME_BOOKMARK] == 25_000
+
+    contents = backend().browse()
+    assert sorted(t.title for t in contents.tracks if t.kind == "song") == ["First Song", "Other Single",
+                                                                           "Second: Song?"]
+    lists = {p.name: p for p in contents.playlists}
+    talk_list = lists["Podcast: Test Talk"]
+    assert talk_list.fixed and talk_list.id.startswith("zune:")
+    assert sorted(contents.tracks[i].title for i in talk_list.track_indices) == ["One", "Two"]
+    assert all(contents.tracks[i].kind == "episode" and contents.tracks[i].album == "Test Talk"
+               for i in talk_list.track_indices)
+    with pytest.raises(RuntimeError):
+        backend().reorder(talk_list.id, [])
+
+    # Deleting the show's last episode from the Zune takes the show with it.
+    special_loc = next(t.location for t in contents.tracks if t.title == "Video special")
+    assert backend().delete_tracks({special_loc}) == 1
+    assert "Tube Show" not in {p[NAME] for p in fake.of_format(zune.MEDIACAST).values()}
+
+    # Episodes deleted in the app go from the Zune too, and so does their emptied show.
+    assert backend().sync(library.root, episodes=[]).removed == 2
+    assert not fake.of_format(zune.MEDIACAST) and not any(fake.path(h).startswith("/Podcasts") for h in fake.objects)
+
+
+def test_a_stale_cache_never_deletes_a_show_that_still_has_episodes(library, fake, tmp_path):
+    items = _episodes(tmp_path)[:2]  # two episodes of Test Talk
+    backend().sync(library.root, episodes=items)
+    with zune.Zune.connect() as z:
+        one, two = (z.find(backend()._manifest()["episodes"][k]["path"]) for k in ("talk|1", "talk|2"))
+        z.objects[one].show_link = 0  # what the cache believed about an episode linked behind its back
+        z.delete([two])
+    (show,) = fake.of_format(zune.MEDIACAST)
+    assert fake.references(show) == [one] and one in fake.objects

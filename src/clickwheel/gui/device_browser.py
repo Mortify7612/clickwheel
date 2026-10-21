@@ -177,7 +177,8 @@ class DeviceBrowser(QWidget):
         self.lists.blockSignals(True)
         self.lists.clear()
         label = "Play order" if contents.ordered_library else "All songs"
-        everything = QListWidgetItem(f"{label} ({len(contents.tracks)})")
+        songs = sum(1 for t in contents.tracks if t.kind == "song")
+        everything = QListWidgetItem(f"{label} ({songs})")
         everything.setData(256, ALL)
         self.lists.addItem(everything)
         for i, p in enumerate(contents.playlists):
@@ -196,7 +197,10 @@ class DeviceBrowser(QWidget):
         return item.data(256) if item else ALL
 
     def _reorderable(self) -> bool:
-        return self._which() != ALL or self._contents.ordered_library
+        which = self._which()
+        if which == ALL:
+            return self._contents.ordered_library
+        return not self._contents.playlists[which].fixed
 
     def _reset_view(self) -> None:
         which = self._which()
@@ -204,9 +208,9 @@ class DeviceBrowser(QWidget):
             self._view = list(self._contents.playlists[which].track_indices)
         elif self._contents.ordered_library:
             self._view = list(range(len(self._contents.tracks)))
-        else:
+        else:  # songs only: a Zune's videos and podcast episodes have their own lists
             tracks = self._contents.tracks
-            self._view = sorted(range(len(tracks)),
+            self._view = sorted((i for i, t in enumerate(tracks) if t.kind == "song"),
                                 key=lambda i: (tracks[i].artist.casefold(), tracks[i].album.casefold(),
                                                tracks[i].track_number))
 
@@ -267,7 +271,9 @@ class DeviceBrowser(QWidget):
             self.table.setCurrentCell(select[0], 1)
         self._show_selected(self.table.currentRow())
         minutes = sum(t.duration for t in tracks) // 60
-        status = note or f"{len(tracks)} songs · {minutes // 60} h {minutes % 60} min"
+        kinds = {t.kind for t in tracks}
+        noun = {"episode": "episodes", "video": "videos"}.get(kinds.pop(), "songs") if len(kinds) == 1 else "songs"
+        status = note or f"{len(tracks)} {noun} · {minutes // 60} h {minutes % 60} min"
         if self._dirty:
             status += " · order not saved"
         self.summary.setText(status)

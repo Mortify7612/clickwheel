@@ -18,6 +18,7 @@ from .ribbon import SectionLabel
 from .table_style import MUTED, NUMBER, TEXT, TITLE, style_track_table
 
 ALL = "__all__"
+VIDEOS = "__videos__"  # songs that have a music video
 ART_KEY, ART_PATH = 257, 258  # item data roles on the Title cell
 
 
@@ -34,12 +35,14 @@ class SortKeyItem(QTableWidgetItem):
 class LibraryPage(QWidget):
     sync_requested = Signal(list)  # library file paths to add to the current iPod
     zune_sync_requested = Signal(list)  # ... or to the Zune HD
+    videos_requested = Signal(list)  # LibraryTracks to get music videos for
     play_requested = Signal(list, int)  # PlayItems in view order, index to start at
 
-    def __init__(self, library: Library, manager: workers.DownloadManager):
+    def __init__(self, library: Library, manager: workers.DownloadManager, videos=None):
         super().__init__()
         self.library = library
         self.manager = manager
+        self.videos = videos  # MusicVideos store, or None
         self.covers = CoverCache(self)
         self.covers.loaded.connect(self._on_cover)
         self._art_items: dict[str, list[QTableWidgetItem]] = {}
@@ -92,11 +95,12 @@ class LibraryPage(QWidget):
         for label, slot in (("Play", lambda: self._play_from(self.table.currentRow())),
                             ("Sync to iPod", self._sync_selected),
                             ("Sync to Zune", lambda: self._emit_selected(self.zune_sync_requested)),
+                            ("Get music videos", self._request_videos),
                             ("Delete from library…", self._delete_selected)):
             action = QAction(label, self.table)
             action.triggered.connect(slot)
             self.table.addAction(action)
-        self._zune_action = self.table.actions()[-2]
+        self._zune_action = self.table.actions()[-3]
         self._zune_action.setVisible(False)
         self.summary = QLabel()
         right = QWidget()
@@ -134,6 +138,12 @@ class LibraryPage(QWidget):
         everything = QListWidgetItem(f"All songs ({len(self.library.tracks())})")
         everything.setData(256, ALL)
         self.lists.addItem(everything)
+        if self.videos is not None and (videos := self.videos.all()):
+            item = QListWidgetItem(f"🎬 Music videos ({len(videos)})")
+            item.setData(256, VIDEOS)
+            self.lists.addItem(item)
+            if current == VIDEOS:
+                self.lists.setCurrentItem(item)
         for p in self.library.playlists():
             icon = {"album": "💿", "playlist": "🎵"}.get(p.kind, "")
             item = QListWidgetItem(f"{icon} {p.title} ({p.track_count})")
@@ -148,9 +158,13 @@ class LibraryPage(QWidget):
 
     def _show_tracks(self) -> None:
         pid = self._selected_list()
-        tracks = self.library.tracks() if pid == ALL else self.library.playlist_tracks(pid)
-        self.update_btn.setEnabled(pid != ALL)
-        self.remove_list_btn.setEnabled(pid != ALL)
+        if pid == VIDEOS:
+            with_video = {v.track_id for v in self.videos.all()}
+            tracks = [t for t in self.library.tracks() if t.video_id in with_video]
+        else:
+            tracks = self.library.tracks() if pid == ALL else self.library.playlist_tracks(pid)
+        self.update_btn.setEnabled(pid not in (ALL, VIDEOS))
+        self.remove_list_btn.setEnabled(pid not in (ALL, VIDEOS))
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(tracks))
         self._art_items = {}
@@ -173,7 +187,7 @@ class LibraryPage(QWidget):
             title.setIcon(QIcon(self.covers.thumb(key)))
             self._art_items.setdefault(key, []).append(title)
             self.covers.request(key, self.library.root / t.relpath)
-        self.table.setSortingEnabled(pid == ALL)
+        self.table.setSortingEnabled(pid in (ALL, VIDEOS))
         self._mark_now_playing()
         self._show_selected(self.table.currentRow())
         minutes = sum(t.duration for t in tracks) // 60
@@ -249,6 +263,12 @@ class LibraryPage(QWidget):
     def set_zune_available(self, available: bool) -> None:
         self.zune_sync_btn.setVisible(available)
         self._zune_action.setVisible(available)
+
+    def _request_videos(self) -> None:
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        tracks = [t for r in rows if (t := self.library.track(self.table.item(r, 0).data(256)))]
+        if tracks:
+            self.videos_requested.emit(tracks)
 
     def _sync_selected(self) -> None:
         self._emit_selected(self.sync_requested)

@@ -110,3 +110,12 @@ def test_clean_title(raw, clean):
     from clickwheel.ytm import _clean_title
 
     assert _clean_title(raw) == clean
+
+
+def test_device_syncs_skip_podcasts_and_videos(tmp_path):
+    from clickwheel.library import is_music_path
+
+    root = tmp_path / "lib"
+    for rel in ("A/B/01 Song.m4a", "Podcasts/Show/2026-10-01 Ep.m4a", "Music Videos/A/Song.mp4",
+                "Playlists/x.m3u8", "Podcasts Weekly/Album/01 Real Song.m4a"):
+        assert is_music_path(root, root / rel) == (rel.startswith(("A/", "Podcasts Weekly/")))

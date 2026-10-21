@@ -51,12 +51,13 @@ def ffmpeg_location() -> str | None:
 
 
 def download_audio(video_id: str, staging: Path, on_progress: ProgressFn | None = None,
-                   cookies: str | None = None) -> Path:
+                   cookies: str | None = None, info: dict | None = None) -> Path:
     """Download one track as AAC/M4A into ``staging`` and return the file path.
 
     YouTube serves AAC in an MP4 container (128 kbps, or 256 kbps for Premium
     sessions), which every iPod plays natively, so no re-encoding is needed in
-    the common case.
+    the common case. ``info``, if given, receives yt-dlp's metadata (upload
+    date, description, ...).
     """
     staging.mkdir(parents=True, exist_ok=True)
 
@@ -87,7 +88,9 @@ def download_audio(video_id: str, staging: Path, on_progress: ProgressFn | None 
     url = f"https://music.youtube.com/watch?v={video_id}"
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
+            meta = ydl.extract_info(url, download=True)
+            if info is not None and meta:
+                info.update(ydl.sanitize_info(meta))
     except yt_dlp.utils.DownloadError as exc:
         raise DownloadError(str(exc).removeprefix("ERROR: ")) from exc
 

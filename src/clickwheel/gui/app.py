@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 from .._version import __version__
 from ..config import APP_NAME, DB_FILE, PLAYBACK_FILE, Settings
 from ..library import Library
+from ..podcasts import Podcasts
+from ..video import MusicVideos
 from .device_page import DevicePage
 from .fonts import load_fonts
 from .lcd import BARS, LcdDisplay
@@ -26,6 +28,7 @@ from .ribbon import TitleBar
 from .sparkle import Backdrop
 from .table_style import restyle_table
 from .library_page import LibraryPage
+from .podcasts_page import MediaJobs, PodcastsPage
 from .theme import THEMES, apply_theme, current_theme, is_retro
 from .update_dialog import check_for_updates
 from .workers import DownloadManager
@@ -116,25 +119,35 @@ class MainWindow(QMainWindow):
         status.setVisible(self.settings.show_status_bar)
 
         self.ytm_page = YtmPage(self.manager, status)
-        self.library_page = LibraryPage(self.library, self.manager)
+        self.podcasts = Podcasts(self.library.root, DB_FILE)
+        self.videos = MusicVideos(self.library.root, DB_FILE)
+        self.media = MediaJobs(self.podcasts, self.videos)
+        self.library_page = LibraryPage(self.library, self.manager, self.videos)
+        self.podcasts_page = PodcastsPage(self.podcasts, self.media)
+        self.library_page.videos_requested.connect(self.media.fetch_videos)
+        self.media.videos_changed.connect(self.library_page.refresh)
+        self.media.status.connect(lambda text: status.showMessage(text, 8000))
         self.device_page = DevicePage(self.library, self.settings)
         self.manager.library_changed.connect(self.device_page.refresh_choices)
         # Edits on the iPod tab can also change the library (mirrored order, deletions).
         self.device_page.browser.library_edited.connect(self.library_page.refresh)
         self.device_page.browser.library_edited.connect(self.device_page.refresh_choices)
         # The Zune HD gets its own tab (Linux only: it's reached over MTP through libusb).
-        self.zune_page = ZunePage(self.library, self.settings) if sys.platform.startswith("linux") else None
+        self.zune_page = (ZunePage(self.library, self.settings, self.podcasts, self.videos)
+                          if sys.platform.startswith("linux") else None)
         self.device_pages = [p for p in (self.device_page, self.zune_page) if p is not None]
         if self.zune_page is not None:
             self.manager.library_changed.connect(self.zune_page.refresh_choices)
             self.zune_page.browser.library_edited.connect(self.library_page.refresh)
             self.zune_page.browser.library_edited.connect(self.zune_page.refresh_choices)
             self.zune_page.present.connect(self.library_page.set_zune_available)
+            self.zune_page.podcasts_changed.connect(self.podcasts_page.refresh)
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
         tabs.addTab(self.ytm_page, "YouTube Music")
         tabs.addTab(self.library_page, "Library")
+        tabs.addTab(self.podcasts_page, "Podcasts")
         tabs.addTab(self.device_page, "iPod")
         if self.zune_page is not None:
             tabs.addTab(self.zune_page, "Zune")
@@ -202,7 +215,8 @@ class MainWindow(QMainWindow):
                     original = tabs.tabText(i)
                     tabs.tabBar().setTabData(i, original)
                 tabs.setTabText(i, original.upper() if is_retro() else original)
-        for table in (self.library_page.table, self.ytm_page.table, *(p.browser.table for p in self.device_pages)):
+        for table in (self.library_page.table, self.ytm_page.table, self.podcasts_page.table,
+                      *(p.browser.table for p in self.device_pages)):
             restyle_table(table)
         self.player_bar.refresh_icons()
         self.title_bar.setVisible(is_retro())
@@ -215,6 +229,7 @@ class MainWindow(QMainWindow):
         self.manager.resolving.connect(lambda label: (lcd.set_busy("downloads", True),
                                                       lcd.set_message(f"Looking up {label}")))
         self.manager.idle.connect(lambda: lcd.set_busy("downloads", False))
+        self.media.busy.connect(lambda busy: lcd.set_busy("media", busy))
 
         def on_track(_job, ev):
             from ..pipeline import Status
@@ -242,6 +257,8 @@ class MainWindow(QMainWindow):
         for page in (self.library_page, self.device_page.browser):
             player.track_changed.connect(lambda item, page=page: page.set_now_playing(item.path if item else None))
         self.device_page.browser.play_requested.connect(player.play_queue)
+        self.podcasts_page.play_requested.connect(player.play_queue)
+        self._keep_episode_places()
 
     def closeEvent(self, event) -> None:
         # Sync and edit threads die with the process: quitting mid-write can leave a
@@ -255,8 +272,29 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.Discard:
                 event.ignore()
                 return
+        self._save_episode_place()
         self._save_playback()
         event.accept()
+
+    def _keep_episode_places(self) -> None:
+        """Remember where a podcast episode was left: on pause, on stop, on moving to another track."""
+        player, here = self.player, {"item": None, "position": 0, "duration": 0}
+
+        def on_position(position: int, duration: int) -> None:
+            here["position"], here["duration"] = position, duration
+
+        def save() -> None:
+            if here["item"] is not None:
+                self.podcasts_page.note_playback(here["item"].path, here["position"], here["duration"])
+
+        def on_track(item) -> None:
+            save()
+            here.update(item=item, position=0, duration=0)
+
+        player.position_changed.connect(on_position)
+        player.track_changed.connect(on_track)
+        player.state_changed.connect(lambda state: state != "playing" and save())
+        self._save_episode_place = save
 
     # ── Picking up where you left off ────────────────────────────────────
 
