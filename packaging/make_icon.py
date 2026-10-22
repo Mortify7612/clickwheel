@@ -5,7 +5,8 @@
 An original retro-hardware design: a bevelled gunmetal tile with a green
 dot-matrix screen showing spectrum bars, above a knurled hi-fi dial.
 Outputs packaging/icons/ (PNGs, .ico, .icns) and the runtime copy in
-src/clickwheel/assets/.
+src/clickwheel/assets/, plus the dev variant run from a source checkout
+(clickwheel-dev: a cyan screen, an orange dial light and a "DEV" corner tag).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
-    QColor, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient,
+    QColor, QFont, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,17 +26,19 @@ ASSETS = ROOT / "src" / "clickwheel" / "assets"
 SIZES = [16, 24, 32, 48, 64, 128, 256, 512, 1024]
 
 GREEN, GREEN_DIM, AMBER, RED = QColor("#39ff7a"), QColor(18, 58, 30), QColor("#ffc233"), QColor("#ff5533")
+CYAN, CYAN_DIM, ORANGE = QColor("#3ad8ff"), QColor(14, 44, 62), QColor("#ff8a1f")  # the dev build
 BARS = [3, 5, 7, 6, 4, 6, 5, 3, 4, 2]  # spectrum heights, in dots (of ROWS)
 ROWS = 7
 
 
-def render(size: int) -> QImage:
+def render(size: int, dev: bool = False) -> QImage:
     img = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
     img.fill(Qt.transparent)
     p = QPainter(img)
     p.setRenderHint(QPainter.Antialiasing)
     p.scale(size / 1024, size / 1024)  # draw in a 1024 x 1024 design space
     small = size <= 32
+    lit_main, unlit, light = (CYAN, CYAN_DIM, ORANGE) if dev else (GREEN, GREEN_DIM, GREEN)
 
     # Soft shadow, then the tile.
     if not small:
@@ -81,7 +84,7 @@ def render(size: int) -> QImage:
     for c, height in enumerate(bars):
         for r in range(rows):
             lit = r < height
-            color = (RED if r >= rows - 1 else AMBER if r >= rows - 2 else GREEN) if lit else GREEN_DIM
+            color = (RED if r >= rows - 1 else AMBER if r >= rows - 2 else lit_main) if lit else unlit
             x = screen.left() + pad_x + c * cell_w + (cell_w - dot) / 2
             y = screen.bottom() - pad_y - (r + 1) * cell_h + (cell_h - dot) / 2
             if lit and not small:  # glow
@@ -96,6 +99,8 @@ def render(size: int) -> QImage:
     if tiny:
         p.end()
         return img
+    if dev and size >= 48:
+        _dev_tag(p)
 
     # Knurled dial.
     center, radius = QPointF(512, 720), 178
@@ -122,9 +127,9 @@ def render(size: int) -> QImage:
         a = math.radians(-120)
         led = QPointF(center.x() + math.cos(a) * (radius - 64), center.y() + math.sin(a) * (radius - 64))
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(57, 255, 122, 70))
+        p.setBrush(QColor(light.red(), light.green(), light.blue(), 70))
         p.drawEllipse(led, 24, 24)
-        p.setBrush(GREEN)
+        p.setBrush(light)
         p.drawEllipse(led, 13, 13)
     # Concave centre button.
     hub_r = radius * 0.42
@@ -138,6 +143,35 @@ def render(size: int) -> QImage:
     return img
 
 
+def _dev_tag(p: QPainter) -> None:
+    """An orange "DEV" sash across the bottom-right corner of the tile."""
+    p.save()
+    p.setClipPath(_tile_path())
+    p.translate(800, 800)
+    p.rotate(-45)
+    band = QRectF(-330, -62, 660, 124)
+    fill = QLinearGradient(0, band.top(), 0, band.bottom())
+    fill.setColorAt(0, QColor("#ffa64a"))
+    fill.setColorAt(1, QColor("#e86a00"))
+    p.setPen(Qt.NoPen)
+    p.fillRect(band, fill)
+    p.fillRect(QRectF(band.left(), band.top(), band.width(), 6), QColor(255, 255, 255, 90))
+    font = QFont("DejaVu Sans")
+    font.setPixelSize(92)
+    font.setWeight(QFont.Black)
+    font.setLetterSpacing(QFont.AbsoluteSpacing, 10)
+    p.setFont(font)
+    p.setPen(QColor("#2a1400"))
+    p.drawText(band, Qt.AlignCenter, "DEV")
+    p.restore()
+
+
+def _tile_path() -> QPainterPath:
+    tile = QPainterPath()
+    tile.addRoundedRect(QRectF(64, 56, 896, 896), 184, 184)
+    return tile
+
+
 def main() -> int:
     app = QGuiApplication(sys.argv)  # noqa: F841  (QPainter text/image support)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -148,6 +182,10 @@ def main() -> int:
         render(size).save(str(path))
         pngs[size] = path
     render(256).save(str(ASSETS / "clickwheel.png"))
+    for size in SIZES:
+        if size <= 512:
+            render(size, dev=True).save(str(OUT / f"clickwheel-dev-{size}.png"))
+    render(256, dev=True).save(str(ASSETS / "clickwheel-dev.png"))
 
     from PIL import Image
 

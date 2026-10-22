@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from platformdirs import user_config_dir, user_data_dir, user_music_dir
 
 APP_NAME = "Clickwheel"
+# Run from a source checkout, Clickwheel calls itself Clickwheel Dev, with its own launcher
+# and icon, so it can sit beside an installed release. Both use the same settings and library.
+IS_DEV = not getattr(sys, "frozen", False)
+APP_ID = "clickwheel-dev" if IS_DEV else "clickwheel"  # desktop file, icon and Wayland app id
+DISPLAY_NAME = "Clickwheel Dev" if IS_DEV else APP_NAME
 
 CONFIG_DIR = Path(user_config_dir(APP_NAME, appauthor=False))
 DATA_DIR = Path(user_data_dir(APP_NAME, appauthor=False))

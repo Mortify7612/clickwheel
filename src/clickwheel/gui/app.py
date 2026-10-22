@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from .. import updater
 from .._version import __version__
-from ..config import APP_NAME, DB_FILE, PLAYBACK_FILE, Settings
+from ..config import APP_ID, APP_NAME, DB_FILE, DISPLAY_NAME, PLAYBACK_FILE, Settings
 from ..library import Library
 from ..podcasts import Podcasts
 from ..video import MusicVideos
@@ -39,7 +39,7 @@ from .ytm_page import YtmPage
 from .zune_page import ZunePage
 
 
-ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "clickwheel.png"
+ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / f"{APP_ID}.png"
 
 
 class SettingsDialog(QDialog):
@@ -122,7 +122,7 @@ class MainWindow(QMainWindow):
         self.library = Library(self.settings.library_path, DB_FILE)
         self.manager = DownloadManager(self.library, self.settings)
 
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(DISPLAY_NAME)
         self.resize(1100, 720)
         status = self.statusBar()
         # Messages always go through the status bar; the LCD ticker shows them too, so the
@@ -215,7 +215,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(updates)
         about = QAction("About Clickwheel", self)
         about.triggered.connect(lambda: QMessageBox.about(
-            self, "About Clickwheel", f"<b>Clickwheel {__version__}</b><br>YouTube Music to iPod."))
+            self, f"About {DISPLAY_NAME}", f"<b>{DISPLAY_NAME} {__version__}</b><br>YouTube Music to iPod."))
         help_menu.addAction(about)
 
         status.showMessage(f"Library: {self.library.root}")
@@ -400,7 +400,7 @@ class MainWindow(QMainWindow):
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    app.setDesktopFileName("clickwheel")
+    app.setDesktopFileName(APP_ID)
     app.setWindowIcon(QIcon(str(ICON_PATH)))
     load_fonts()
     apply_theme(app, Settings.load().theme)
