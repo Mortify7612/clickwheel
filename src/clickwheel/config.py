@@ -32,6 +32,7 @@ class Settings:
     # Rockbox devices: mirror files instead of writing the Apple database.
     rockbox_prefers_files: bool = True
     check_for_updates: bool = True
+    update_channel: str = ""  # "stable" | "beta"; "" follows the build (beta builds stay on beta)
     show_status_bar: bool = False  # the LCD ticker already shows status messages
     theme: str = "retro"  # "retro" | "y2k" | "bliss" | "aqua" | "halo" | "system"
     last_update_check: float = 0.0

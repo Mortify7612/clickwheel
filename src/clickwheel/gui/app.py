@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QGroupBox, QHeaderView, QMainWindow, QMessageBox, QPushButton, QSpinBox, QTabWidget, QWidget,
 )
 
+from .. import updater
 from .._version import __version__
 from ..config import APP_NAME, DB_FILE, PLAYBACK_FILE, Settings
 from ..library import Library
@@ -71,6 +72,13 @@ class SettingsDialog(QDialog):
         self.auto_update = QCheckBox("Check for Clickwheel updates once a day")
         self.auto_update.setChecked(settings.check_for_updates)
         form.addRow(self.auto_update)
+        self.channel = QComboBox()
+        self.channel.addItem("Stable", "stable")
+        self.channel.addItem("Beta: early builds with new features (may have rough edges)", "beta")
+        self.channel.setCurrentIndex(max(0, self.channel.findData(
+            settings.update_channel or updater.default_channel())))
+        self.channel.setToolTip("Moving back to Stable from a beta takes effect at the next stable release.")
+        form.addRow("Updates", self.channel)
         self.parallel = QSpinBox(minimum=1, maximum=6, value=settings.parallel_downloads)
         form.addRow("Simultaneous downloads", self.parallel)
         self.cover = QSpinBox(minimum=300, maximum=2000, singleStep=100, value=settings.cover_size)
@@ -93,6 +101,7 @@ class SettingsDialog(QDialog):
         self.settings.prefer_album_versions = self.album_versions.isChecked()
         self.settings.rockbox_prefers_files = self.rockbox_files.isChecked()
         self.settings.check_for_updates = self.auto_update.isChecked()
+        self.settings.update_channel = self.channel.currentData()
         self.settings.theme = self.theme.currentData()
         self.settings.show_status_bar = self.status_bar.isChecked()
         apply_theme(QApplication.instance(), self.settings.theme)
