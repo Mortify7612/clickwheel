@@ -108,6 +108,15 @@ def run_events(ms: int) -> None:
     loop.exec()
 
 
+def run_until(done, limit_ms: int) -> bool:
+    """Run the event loop until ``done()`` or ``limit_ms`` passes (CI sound devices can be slow)."""
+    for _ in range(limit_ms // 100):
+        if done():
+            return True
+        run_events(100)
+    return done()
+
+
 def test_equalizer_plays_through_the_sound_card(library, player):
     from PySide6.QtMultimedia import QMediaDevices
 
@@ -123,9 +132,8 @@ def test_equalizer_plays_through_the_sound_card(library, player):
     player.play_queue(items, 0)
     run_events(400)
     player.set_equalizer(True, PRESETS["Rock"], -3)  # switched on mid-song
-    run_events(1200)
-    assert player.is_playing and player._sink is not None
-    assert player._sink.processedUSecs() > 600_000
+    assert run_until(lambda: player._sink is not None and player._sink.processedUSecs() > 600_000, 8000)
+    assert player.is_playing
     assert levels  # the meter keeps running (flat at volume 0)
     player.seek(0)
     assert not player._backlog

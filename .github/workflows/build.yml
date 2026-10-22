@@ -125,7 +125,12 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir dmg && cp -R dist/Clickwheel.app dmg/ && ln -s /Applications dmg/Applications
-          hdiutil create -volname Clickwheel -srcfolder dmg -ov -format UDZO "Clickwheel-${{ matrix.name }}.dmg"
+          # hdiutil now and then fails with "Resource busy" on the hosted runners; try again.
+          for attempt in 1 2 3 4; do
+            hdiutil create -volname Clickwheel -srcfolder dmg -ov -format UDZO "Clickwheel-${{ matrix.name }}.dmg" && break
+            [ "$attempt" = 4 ] && exit 1
+            sleep 10
+          done
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
