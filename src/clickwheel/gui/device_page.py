@@ -9,7 +9,7 @@ from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QPainter, QPainterPath, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QComboBox, QFileDialog, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton, QSizePolicy,
+    QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton, QSizePolicy,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -19,6 +19,7 @@ from ..library import Library
 from . import icons, workers
 from .device_browser import DeviceBrowser
 from .fonts import label_font, ui_font
+from .progress_strip import ProgressStrip
 from .table_style import _tint
 from .theme import is_retro
 
@@ -134,8 +135,7 @@ class DevicePage(QWidget):
         header.addLayout(text, 1)
         header.addLayout(side)
 
-        self.progress = QProgressBar()  # only while syncing (and briefly after)
-        self.progress.setTextVisible(True)
+        self.progress = ProgressStrip()  # only while syncing (and briefly after)
         self.progress.hide()
         self._hide_progress = QTimer(self, singleShot=True, interval=8000, timeout=self.progress.hide)
         self.ro_warning = QLabel()
@@ -374,6 +374,8 @@ class DevicePage(QWidget):
         self.sync_btn.setText("Cancel")
         self.eject_btn.setEnabled(False)
         self.progress.setRange(0, 0)
+        self.progress.setText("Starting…")
+        self.progress.setCount("%v / %m")
         self._hide_progress.stop()
         self.progress.show()
         self._phase = ""
@@ -392,9 +394,7 @@ class DevicePage(QWidget):
         if tot:
             self.progress.setRange(0, tot)
             self.progress.setValue(cur)
-            self.progress.setFormat(f"{msg} — %v/%m")
-        else:
-            self.progress.setFormat(msg)
+        self.progress.setText(msg)
         # Per-song detail goes on the progress bar; the log gets one line per phase.
         phase = msg.split(" · ", 1)[0]
         if msg:
@@ -416,6 +416,7 @@ class DevicePage(QWidget):
         self.sync_btn.setEnabled(True)
         self.progress.setRange(0, 1)
         self.progress.setValue(1)
+        self.progress.setCount("")
         self._hide_progress.start()  # leave the result up for a few seconds
         self._show_device()
 
@@ -425,17 +426,17 @@ class DevicePage(QWidget):
         line = (f"Added {summary.added}, removed {summary.removed}, updated {summary.updated}, "
                 f"playlists {summary.playlists}")
         if summary.ok:
-            self.progress.setFormat("Sync complete")
+            self.progress.setText("Sync complete")
             self._log("✔ " + line)
         else:
-            self.progress.setFormat("Sync failed")
+            self.progress.setText("Sync failed")
             self._log(f"✖ Sync failed (planned: {line.lower()})")
             for err in summary.errors:
                 self._log("   " + err)
 
     def _on_sync_failed(self, message: str) -> None:
         self._finish()
-        self.progress.setFormat("Sync failed")
+        self.progress.setText("Sync failed")
         self._log(f"✖ Sync failed: {message}")
         QMessageBox.critical(self, "Sync failed", message)
 

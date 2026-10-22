@@ -30,6 +30,7 @@ class UpdateDialog(QDialog):
         self.status = QLabel()
         self.status.setWordWrap(True)
         self.progress = QProgressBar()
+        self.progress.setTextVisible(False)  # the status line above says how far along it is
         self.progress.hide()
 
         self.buttons = QDialogButtonBox()

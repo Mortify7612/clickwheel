@@ -13,7 +13,7 @@ from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QClipboard, QColor, QDesktopServices, QIcon, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMenu, QMessageBox, QProgressBar, QPushButton, QSplitter,
+    QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSplitter,
     QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -25,6 +25,7 @@ from .artwork import CoverCache, RemoteArt
 from .collection_header import CollectionHeader
 from .cover_grid import CoverGrid, Tile
 from .login import LoginDialog
+from .progress_strip import ProgressStrip
 from .ribbon import SectionLabel
 from .table_style import (
     MUTED, NUMBER, PROGRESS, ROW_HEIGHT, SECTION, SECTION_HEIGHT, TEXT, TITLE, restyle_table, style_track_table,
@@ -268,8 +269,7 @@ class YtmPage(QWidget):
         self.message.setAlignment(Qt.AlignCenter)
         self.message.setWordWrap(True)
         self.message.setStyleSheet("color: palette(placeholder-text); padding: 30px;")
-        self.overall = QProgressBar()
-        self.overall.setFormat("%v / %m songs")
+        self.overall = ProgressStrip("%v / %m songs")
 
         browser = QVBoxLayout()
         browser.setContentsMargins(0, 0, 0, 0)
@@ -1056,6 +1056,12 @@ class YtmPage(QWidget):
         active = [s for s in self._sections if s.active]
         total = sum(len(s.tracks) for s in active)
         self.overall.setVisible(bool(active))
+        running = next((s for s in active if s.state == "downloading"), None)
+        waiting = len(active) - (running is not None)
+        text = f"Downloading {running.title}" if running else "Waiting to start"
+        if running and waiting:
+            text += f" · {waiting} more queued"
+        self.overall.setText(text)
         self.overall.setRange(0, max(1, total))
         self.overall.setValue(sum(len(s.ended) for s in active))
 
