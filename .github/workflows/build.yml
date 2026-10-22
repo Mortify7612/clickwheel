@@ -25,21 +25,31 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest -q
 
-  build:
+  # Which platforms to build: all of them, except for beta tags (v0.2.0-beta.1),
+  # which are Linux only. Linux builds on 22.04 for an older glibc, so they run on more distros.
+  plan:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          linux='{"os": "ubuntu-22.04", "name": "linux-x64"}'
+          all='{"os": "macos-15", "name": "macos-arm64"}, {"os": "macos-15-intel", "name": "macos-intel"},
+               {"os": "windows-latest", "name": "windows-x64"}, '"$linux"
+          case "$GITHUB_REF" in
+            refs/tags/v*-*) echo "matrix=[$linux]" >> "$GITHUB_OUTPUT" ;;
+            *)              echo "matrix=[$(echo $all)]" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  build:
+    needs: [test, plan]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-15
-            name: macos-arm64
-          - os: macos-15-intel
-            name: macos-intel
-          - os: windows-latest
-            name: windows-x64
-          - os: ubuntu-22.04  # older glibc so the build runs on more distros
-            name: linux-x64
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
