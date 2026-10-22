@@ -8,7 +8,7 @@ the right. Theme stylesheets dress it through the ``PlayerDeck``,
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QPainter, QPalette
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QStyle, QStyleOptionSlider, QVBoxLayout,
@@ -61,6 +61,8 @@ def _time(ms: int) -> str:
 
 
 class PlayerBar(QFrame):
+    equalizer_toggled = Signal(bool)  # show / hide the equalizer panel
+
     def __init__(self, player: Player, parent=None):
         super().__init__(parent)
         self.setObjectName("PlayerDeck")
@@ -148,6 +150,8 @@ class PlayerBar(QFrame):
 
         # Volume
         self.mute_btn = button("volume", "Mute", self._toggle_mute)
+        # (A lambda: PySide passes no arguments when the slot is a signal's own emit.)
+        self.eq_btn = button("eq", "Equalizer", lambda on: self.equalizer_toggled.emit(on), checkable=True)
         self.volume = _ClickSlider(Qt.Horizontal)
         self.volume.setObjectName("VolumeSlider")
         self.volume.setRange(0, 100)
@@ -158,6 +162,8 @@ class PlayerBar(QFrame):
         volume = QHBoxLayout()
         volume.setSpacing(4)
         volume.addStretch(1)
+        volume.addWidget(self.eq_btn)
+        volume.addSpacing(6)
         volume.addWidget(self.mute_btn)
         volume.addWidget(self.volume)
 
@@ -191,7 +197,7 @@ class PlayerBar(QFrame):
     def refresh_icons(self) -> None:
         """Repaint the icons in the current theme's colours (call after a theme change)."""
         accent = self.palette().color(QPalette.Link)
-        for b in (self.shuffle_btn, self.prev_btn, self.next_btn, self.repeat_btn, self.mute_btn):
+        for b in (self.shuffle_btn, self.prev_btn, self.next_btn, self.repeat_btn, self.mute_btn, self.eq_btn):
             name = b.property("icon_name")
             if b is self.mute_btn and self.volume.value() == 0:
                 name = "muted"

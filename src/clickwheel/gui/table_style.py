@@ -19,7 +19,9 @@ from .ribbon import paint_ribs
 from .theme import current_theme, is_retro
 
 TITLE, TEXT, MUTED, NUMBER = "title", "text", "muted", "number"
+MARK = "mark"  # a dot in the accent colour when the cell has any text (e.g. "on the iPod")
 SECTION = Qt.UserRole + 40  # truthy on a group header row (span it across the table)
+PROGRESS = Qt.UserRole + 41  # 0..1 on a cell: a thin progress bar under its text
 ROW_HEIGHT = 46
 SECTION_HEIGHT = 32
 COVER = 36
@@ -46,6 +48,16 @@ def _mix(a: QColor, b: QColor, t: float) -> QColor:
     """``a`` blended toward ``b`` by ``t`` (0..1)."""
     return QColor(round(a.red() + (b.red() - a.red()) * t), round(a.green() + (b.green() - a.green()) * t),
                   round(a.blue() + (b.blue() - a.blue()) * t))
+
+
+def tier_color(pal: QPalette, kind: str) -> QColor:
+    """Text colour for a column kind: titles full strength, supporting text quieter."""
+    if is_retro():
+        return RETRO_TIERS.get(kind, RETRO_TIERS[TEXT])
+    (base, _glass), text = _base(pal), pal.color(QPalette.Text)
+    if kind == TITLE:
+        return text
+    return _mix(text, base, {TEXT: 0.22, MUTED: 0.45, NUMBER: 0.5}.get(kind, 0.3))
 
 
 class TrackDelegate(QStyledItemDelegate):
@@ -136,12 +148,10 @@ class TrackDelegate(QStyledItemDelegate):
             color = pal.color(QPalette.HighlightedText)
         elif override is not None:
             color = override.color() if hasattr(override, "color") else QColor(override)
-        elif retro:
-            color = RETRO_TIERS.get(kind, RETRO_TIERS[TEXT])
-        elif kind == TITLE:
-            color = text
+        elif kind == MARK:
+            color = pal.color(QPalette.Link)
         else:
-            color = _mix(text, base, {TEXT: 0.22, MUTED: 0.45, NUMBER: 0.5}.get(kind, 0.3))
+            color = tier_color(pal, kind)
         font = QFont(self._number_font if kind == NUMBER else self._title_font if kind == TITLE else self._text_font)
         item_font = index.data(Qt.FontRole)
         if item_font is not None and item_font.bold():
@@ -152,6 +162,13 @@ class TrackDelegate(QStyledItemDelegate):
         p.setFont(font)
 
         inner = rect.adjusted(12, 0, -12, 0)
+        if kind == MARK:
+            if index.data(Qt.DisplayRole):
+                p.setPen(Qt.NoPen)
+                p.setBrush(color)
+                p.drawEllipse(QRectF(rect).center(), 3.5, 3.5)
+            p.restore()
+            return
         icon = index.data(Qt.DecorationRole)
         if kind == TITLE and icon is not None:
             pix = icon.pixmap(COVER, COVER)
@@ -170,6 +187,16 @@ class TrackDelegate(QStyledItemDelegate):
                 p.drawText(inner.translated(dx, dy), align, shown)
         p.setPen(color)
         p.drawText(inner, align, shown)
+        progress = index.data(PROGRESS)
+        if progress is not None:
+            bar = QRectF(inner.left(), rect.bottom() - 11, inner.width(), 4)
+            track = QPainterPath()
+            track.addRoundedRect(bar, 2, 2)
+            p.fillPath(track, _tint(color, 45))
+            done = QPainterPath()
+            done.addRoundedRect(QRectF(bar.left(), bar.top(), bar.width() * max(0.0, min(1.0, progress)), bar.height()),
+                                2, 2)
+            p.fillPath(done, pal.color(QPalette.Link) if not selected else color)
         p.restore()
 
 
@@ -236,8 +263,10 @@ class _ProportionalColumns(QObject):
         t = self.table
         fixed = sum(t.columnWidth(c) for c in range(t.columnCount()) if c not in self.weights and not t.isColumnHidden(c))
         free = max(0, t.viewport().width() - fixed - 1)
-        total = sum(self.weights.values())
-        cols = sorted(self.weights)
+        cols = [c for c in sorted(self.weights) if not t.isColumnHidden(c)]
+        if not cols:
+            return
+        total = sum(self.weights[c] for c in cols)
         for c in cols[:-1]:
             t.setColumnWidth(c, max(80, free * self.weights[c] // total))
         used = sum(t.columnWidth(c) for c in cols[:-1])
@@ -266,8 +295,10 @@ def restyle_table(table: QTableWidget) -> None:
 
 
 def style_track_table(table: QTableWidget, kinds: dict[int, str], widths: dict[int, int],
-                      weights: dict[int, int]) -> None:
-    """Apply the shared song-table look. ``widths``: fixed-ish columns; ``weights``: share the rest."""
+                      weights: dict[int, int]) -> _ProportionalColumns:
+    """Apply the shared song-table look. ``widths``: fixed-ish columns; ``weights``: share the rest.
+
+    Call ``apply()`` on the result after showing or hiding columns."""
     table.setItemDelegate(TrackDelegate(kinds, table))
     table.setShowGrid(False)
     table.setWordWrap(False)
@@ -289,4 +320,4 @@ def style_track_table(table: QTableWidget, kinds: dict[int, str], widths: dict[i
         if col in widths:
             table.setColumnWidth(col, widths[col])
     style_header(table, kinds)
-    _ProportionalColumns(table, weights)
+    return _ProportionalColumns(table, weights)

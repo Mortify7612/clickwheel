@@ -12,7 +12,7 @@ from clickwheel import updater
 
 def test_versions_and_platforms():
     assert updater.parse_version("v1.10.2") > updater.parse_version("1.9.9")
-    assert updater.parse_version("0.1.0") == (0, 1, 0)
+    assert updater.parse_version("0.1") == updater.parse_version("0.1.0")
     assert updater.platform_key("darwin", "arm64") == "macos-arm64"
     assert updater.platform_key("darwin", "x86_64") == "macos-intel"
     assert updater.platform_key("win32", "AMD64") == "windows-x64"
@@ -149,3 +149,45 @@ def test_appimage_points_to_download_page(monkeypatch):
     monkeypatch.setattr(updater, "is_frozen", lambda: True)
     monkeypatch.setenv("APPIMAGE", "/home/me/Clickwheel.AppImage")
     assert "AppImage" in updater.self_update_blocker()
+
+
+def test_prerelease_versions_sort_before_the_release():
+    order = ["0.1.5", "0.1.6", "0.2.0-alpha.3", "0.2.0-beta.1", "0.2.0-beta.2", "0.2.0-beta.10",
+             "0.2.0-rc.1", "v0.2.0", "0.2.1"]
+    assert sorted(order, key=updater.parse_version) == order
+    assert updater.is_prerelease("v0.2.0-beta.1") and not updater.is_prerelease("0.2.0")
+    assert updater.default_channel("0.2.0-beta.1") == "beta" and updater.default_channel("0.1.6") == "stable"
+
+
+def fake_releases(monkeypatch, releases):
+    sums = "".join(f"{'a' * 64}  {a['name']}\n" for r in releases for a in r["assets"])
+    for r in releases:
+        r["assets"].append({"name": updater.CHECKSUMS, "browser_download_url": "https://dl/sums"})
+    latest = next(r for r in releases if not r.get("prerelease"))
+
+    class Session:
+        headers: dict = {}
+
+        def get(self, url, **_kw):
+            return {updater.LATEST_API: FakeResponse(json_data=latest), updater.RELEASES_API: FakeResponse(json_data=releases),
+                    "https://dl/sums": FakeResponse(text=sums)}[url]
+
+    monkeypatch.setattr(updater, "_session", lambda: Session())
+
+
+def release(tag, prerelease=False, platforms=None):
+    keys = platforms or [updater.platform_key()]
+    return {"tag_name": tag, "prerelease": prerelease, "body": "", "html_url": "", "assets": [
+        {"name": f"Clickwheel-{k}.zip", "browser_download_url": f"https://dl/{k}", "size": 1} for k in keys]}
+
+
+def test_channels(monkeypatch):
+    other = "windows-x64" if updater.platform_key() != "windows-x64" else "linux-x64"
+    fake_releases(monkeypatch, [release("v0.3.0-beta.1", True, [other]), release("v0.2.0-beta.2", True),
+                                release("v0.1.6"), release("v0.2.0-beta.1", True)])
+    assert updater.check("0.1.5", "stable").version == "0.1.6"
+    assert updater.check("0.1.6", "stable") is None
+    beta = updater.check("0.1.5", "beta")  # the newest with a build for this platform
+    assert beta.version == "0.2.0-beta.2" and beta.prerelease
+    assert updater.check("0.2.0-beta.2") is None  # a beta build follows the beta channel
+    assert updater.check("0.2.0-beta.1").version == "0.2.0-beta.2"

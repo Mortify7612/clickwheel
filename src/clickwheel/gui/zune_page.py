@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer, Signal
 from pathlib import Path
 
-from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton
+from PySide6.QtWidgets import QCheckBox, QPushButton
 
 from ..config import Settings
 from ..devices import Device, scan_zune
@@ -28,23 +28,22 @@ def battery_text(level: int | None) -> str:
 class ZunePage(DevicePage):
     present = Signal(bool)  # a Zune is plugged in (or was unplugged)
     podcasts_changed = Signal()  # a sync brought back where episodes were left on the Zune
+    GLYPH = "zune"
+    CAN_CHOOSE_FOLDER = False
+    CAN_EJECT = False
 
     def __init__(self, library: Library, settings: Settings, podcasts: Podcasts, videos: MusicVideos):
-        self.release_btn = None  # the base class shows the (empty) device before these exist
-        self.battery = None
+        self.release_btn = None  # the base class shows the (empty) device before this exists
         self._present = False
         self.podcasts = podcasts
         self.videos = videos
         super().__init__(library, settings, noun="Zune")
-        self.manual_btn.hide()  # an MTP player has no folder to point at
-        self.eject_btn.hide()  # ...and nothing to flush: it's safe to unplug when idle
-        self.battery = QLabel("—")
-        self.info_form.insertRow(3, "Battery", self.battery)  # after Model, Firmware, Storage
         self.release_btn = QPushButton("Release it")
         self.release_btn.setToolTip("Ask KDE's file service to let go of the Zune; it restarts by itself when needed")
+        self.release_btn.setAutoDefault(False)
         self.release_btn.clicked.connect(self._release)
         self.release_btn.hide()
-        self.info_form.addRow(self.release_btn)
+        self.header_buttons.insertWidget(1, self.release_btn)  # after the stretch, before Sync
         self.videos_box = QCheckBox("Music videos (for the songs synced)")
         self.videos_box.setToolTip("Get them on the Library tab: select songs, right-click, “Get music videos”")
         self.podcasts_box = QCheckBox("Podcasts (downloaded episodes)")
@@ -67,6 +66,9 @@ class ZunePage(DevicePage):
     def _no_device_text(self) -> str:
         return "No Zune HD found — plug one in"
 
+    def _no_device_hint(self) -> str:
+        return "Plug in a Zune HD; it's found automatically."
+
     def _set_devices(self, devices: list[Device], keep=None) -> None:
         super()._set_devices(devices, keep)
         if bool(self.devices) != self._present:
@@ -79,16 +81,19 @@ class ZunePage(DevicePage):
         super()._show_device()
         if self.release_btn is not None and self.current is None:
             self.release_btn.hide()
-            self.battery.setText("—")
 
     def _describe(self, dev: Device) -> str:
         info = dev.zune
-        self.firmware.setText("Zune HD (MTP)")
-        self.space.setText(f"{_gb(info.free)} free of {_gb(info.total)}" if info.total else "—")
+        parts = [dev.model]
+        if info.total:
+            parts.append(f"{_gb(info.free)} free of {_gb(info.total)}")
+        self.storage.set_used(1 - info.free / info.total if info.total else 0)
+        if info.battery is not None:
+            battery = f"battery {battery_text(info.battery)}"
+            parts.append(f"<span style='color: #e0533d;'>{battery}</span>" if info.battery <= LOW else battery)
+        self.meta.setText(" · ".join(parts))
         if self.release_btn is not None:
             self.release_btn.setVisible(info.busy)
-            self.battery.setText(battery_text(info.battery))
-            self.battery.setStyleSheet("color: #c0392b;" if info.battery is not None and info.battery <= LOW else "")
         if info.busy:
             return ("Another program has the Zune open — on KDE that's its file service, which grabs MTP players "
                     "when they're plugged in.")

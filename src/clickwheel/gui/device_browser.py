@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QLineEdit,
@@ -12,12 +12,13 @@ from PySide6.QtWidgets import (
 
 from ..devices.contents import DeviceContents, DeviceTrack
 from ..library import Library
-from . import workers
+from . import icons, workers
 from .artwork import ArtPanel, CoverCache, album_key
 from .table_style import MUTED, NUMBER, TEXT, TITLE, style_header, style_track_table
 
 ALL = -1
 ART_KEY, ART_PATH, TRACK_INDEX = 257, 258, 259  # item data roles
+LIST_ICON = Qt.UserRole + 1  # on the playlist list: its glyph
 
 
 def _length(seconds: int) -> str:
@@ -50,6 +51,7 @@ class DeviceBrowser(QWidget):
     editing = Signal(bool)       # an edit is being written to the device
     play_requested = Signal(list, int)  # PlayItems in view order, index to start at
     library_edited = Signal()    # the local library changed as a side effect
+    contents_read = Signal(str, object)  # device name and its DeviceContents ("" and None: no device)
 
     def __init__(self, library: Library | None = None, noun: str = "iPod"):
         super().__init__()
@@ -143,6 +145,7 @@ class DeviceBrowser(QWidget):
         self._dirty = False
         if device is None:
             self._set_contents(DeviceContents([], []), "No device")
+            self.contents_read.emit("", None)
             return
         self.summary.setText("Reading device…")
         self.refresh_btn.setEnabled(False)
@@ -150,15 +153,18 @@ class DeviceBrowser(QWidget):
             self._backend = device.backend(prefer_rockbox_files)
         except RuntimeError as exc:
             self._set_contents(DeviceContents([], []), str(exc))
+            self.contents_read.emit("", None)
             return
         path = device.path
 
         def done(contents):
             if self._device is not None and self._device.path == path:  # ignore stale loads
                 self._set_contents(contents)
+                self.contents_read.emit(self._device.name, contents)
 
         def failed(message):
             self._set_contents(DeviceContents([], []), f"Couldn't read the device: {message}")
+            self.contents_read.emit("", None)
 
         workers.run(self._backend.browse, on_done=done, on_error=failed)
 
@@ -180,13 +186,16 @@ class DeviceBrowser(QWidget):
         songs = sum(1 for t in contents.tracks if t.kind == "song")
         everything = QListWidgetItem(f"{label} ({songs})")
         everything.setData(256, ALL)
+        everything.setData(LIST_ICON, "songs")
         self.lists.addItem(everything)
         for i, p in enumerate(contents.playlists):
             item = QListWidgetItem(f"{p.name} ({len(p.track_indices)})")
+            item.setData(LIST_ICON, "playlist")
             item.setData(256, i)
             self.lists.addItem(item)
         self.lists.setCurrentRow(min(self._list_row, self.lists.count() - 1))
         self.lists.blockSignals(False)
+        self.paint_list_icons()
         self._reset_view()
         self._render(note)
 
@@ -296,6 +305,23 @@ class DeviceBrowser(QWidget):
         self.revert_btn.setEnabled(idle and self._dirty)
         self.delete_btn.setEnabled(idle and bool(rows))
         self.refresh_btn.setEnabled(not self._busy)
+        # Only offer what applies here: moving in ordered lists, saving once something moved.
+        for button in (self.up_btn, self.down_btn):
+            button.setVisible(self._reorderable() and self._backend is not None)
+        for button in (self.save_btn, self.revert_btn):
+            button.setVisible(self._dirty)
+
+    def paint_list_icons(self) -> None:
+        """The same glyphs as the Library's sidebar (call after a theme change too)."""
+        pal = self.lists.palette()
+        self.lists.setIconSize(QSize(16, 16))
+        for i in range(self.lists.count()):
+            item = self.lists.item(i)
+            name = item.data(LIST_ICON)
+            if name:
+                icon = QIcon(icons.pixmap(name, pal.color(QPalette.Text), 16))
+                icon.addPixmap(icons.pixmap(name, pal.color(QPalette.HighlightedText), 16), QIcon.Selected)
+                item.setIcon(icon)
 
     # ── Editing ──────────────────────────────────────────────────────────
 

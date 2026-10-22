@@ -59,7 +59,12 @@ def player():
     from clickwheel.gui.player import Player
 
     QCoreApplication.instance() or QCoreApplication([])
-    return Player(16)
+    player = Player(16)
+    yield player
+    import shiboken6
+
+    player.stop()
+    shiboken6.delete(player)  # the media player has threads: tear it down now, not at exit
 
 
 def saved_state(library, position=61_000):
@@ -93,3 +98,40 @@ def test_restore_refuses_stale_or_broken_saves(library, player):
     gone["queue"][0]["path"] = str(library.root / "deleted.m4a")
     assert not player.restore(gone)
     assert player.current is None and player.snapshot() is None
+
+
+def run_events(ms: int) -> None:
+    from PySide6.QtCore import QEventLoop, QTimer
+
+    loop = QEventLoop()
+    QTimer.singleShot(ms, loop.quit)
+    loop.exec()
+
+
+def test_equalizer_plays_through_the_sound_card(library, player):
+    from PySide6.QtMultimedia import QMediaDevices
+
+    from clickwheel.equalizer import PRESETS
+    from clickwheel.gui.player import PlayItem
+
+    if QMediaDevices.defaultAudioOutput().isNull():
+        pytest.skip("no sound device")
+    player.set_volume(0.0)  # silent: this runs on real speakers
+    levels = []
+    player.spectrum.connect(levels.append)
+    items = [PlayItem(library.root / t.relpath, t.title, t.artist) for t in library.tracks()]
+    player.play_queue(items, 0)
+    run_events(400)
+    player.set_equalizer(True, PRESETS["Rock"], -3)  # switched on mid-song
+    run_events(1200)
+    assert player.is_playing and player._sink is not None
+    assert player._sink.processedUSecs() > 600_000
+    assert levels  # the meter keeps running (flat at volume 0)
+    player.seek(0)
+    assert not player._backlog
+    run_events(300)
+    player.set_equalizer(False, PRESETS["Rock"], -3)
+    assert player._sink is None
+    run_events(300)
+    assert player.is_playing
+    player.stop()

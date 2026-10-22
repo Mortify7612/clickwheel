@@ -28,9 +28,13 @@ import requests
 from ._version import __version__
 
 RELEASES_REPO = "Mortify7612/clickwheel"
-LATEST_API = f"https://api.github.com/repos/{RELEASES_REPO}/releases/latest"
+LATEST_API = f"https://api.github.com/repos/{RELEASES_REPO}/releases/latest"  # never a pre-release
+RELEASES_API = f"https://api.github.com/repos/{RELEASES_REPO}/releases?per_page=30"
 RELEASES_PAGE = f"https://github.com/{RELEASES_REPO}/releases/latest"
 CHECKSUMS = "SHA256SUMS.txt"
+# Stable follows full releases only; beta also takes pre-releases (tags like v0.2.0-beta.1),
+# whichever is newest. A beta build follows the beta channel until told otherwise.
+CHANNELS = {"stable": "Stable", "beta": "Beta"}
 
 ProgressFn = Callable[[int, int], None]
 
@@ -48,10 +52,31 @@ class Release:
     asset_url: str
     asset_size: int
     sha256: str
+    prerelease: bool = False
+
+
+PRE_RANKS = {"a": 0, "alpha": 0, "b": 1, "beta": 1, "rc": 2}
+STABLE_RANK = 9
 
 
 def parse_version(text: str) -> tuple[int, ...]:
-    return tuple(int(n) for n in re.findall(r"\d+", text)[:3]) or (0,)
+    """Sortable: 0.2.0-beta.1 < 0.2.0-beta.2 < 0.2.0-rc.1 < 0.2.0."""
+    base, _, pre = text.strip().lstrip("v").partition("-")
+    nums = [int(n) for n in re.findall(r"\d+", base)[:3]]
+    nums += [0] * (3 - len(nums))
+    if not pre:
+        return (*nums, STABLE_RANK, 0)
+    word = re.match(r"[a-z]*", pre.lower()).group()
+    number = re.findall(r"\d+", pre)
+    return (*nums, PRE_RANKS.get(word, 0), int(number[0]) if number else 0)
+
+
+def is_prerelease(version: str) -> bool:
+    return parse_version(version)[3] != STABLE_RANK
+
+
+def default_channel(current: str = __version__) -> str:
+    return "beta" if is_prerelease(current) else "stable"
 
 
 def platform_key(system: str = sys.platform, machine: str | None = None) -> str:
@@ -73,18 +98,26 @@ def _session() -> requests.Session:
     return s
 
 
-def check(current: str = __version__) -> Release | None:
-    """Return the latest release if it is newer than ``current``, else None."""
+def check(current: str = __version__, channel: str | None = None) -> Release | None:
+    """Return the newest release on ``channel`` if it is newer than ``current``, else None."""
     s = _session()
+    beta = (channel or default_channel(current)) == "beta"
     try:
-        resp = s.get(LATEST_API, timeout=15)
+        resp = s.get(RELEASES_API if beta else LATEST_API, timeout=15)
     except requests.RequestException as exc:
         raise UpdateError(f"Couldn't reach GitHub: {exc}") from exc
     if resp.status_code == 404:
         return None  # nothing published yet
     if not resp.ok:
         raise UpdateError(f"GitHub returned {resp.status_code} while checking for updates")
-    data = resp.json()
+    if beta:
+        # The newest release, pre-release or not, that has a build for this platform.
+        candidates = [r for r in resp.json() if not r.get("draft") and asset_for(r.get("assets", []), platform_key())]
+        if not candidates:
+            return None
+        data = max(candidates, key=lambda r: parse_version(r.get("tag_name", "")))
+    else:
+        data = resp.json()
     version = data.get("tag_name", "").lstrip("v")
     if parse_version(version) <= parse_version(current):
         return None
@@ -100,7 +133,8 @@ def check(current: str = __version__) -> Release | None:
     if not sha:
         raise UpdateError("The release is missing its checksum file, so it can't be verified.")
     return Release(version, data.get("body") or "", data.get("html_url") or RELEASES_PAGE,
-                   asset["name"], asset["browser_download_url"], int(asset.get("size") or 0), sha)
+                   asset["name"], asset["browser_download_url"], int(asset.get("size") or 0), sha,
+                   bool(data.get("prerelease")) or is_prerelease(version))
 
 
 def parse_checksums(text: str) -> dict[str, str]:

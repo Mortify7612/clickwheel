@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -13,12 +14,14 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QGroupBox, QHeaderView, QMainWindow, QMessageBox, QPushButton, QSpinBox, QTabWidget, QWidget,
 )
 
+from .. import updater
 from .._version import __version__
 from ..config import APP_NAME, DB_FILE, PLAYBACK_FILE, Settings
 from ..library import Library
 from ..podcasts import Podcasts
 from ..video import MusicVideos
 from .device_page import DevicePage
+from .eq_panel import EqPanel
 from .fonts import load_fonts
 from .lcd import BARS, LcdDisplay
 from .player import Player
@@ -73,6 +76,13 @@ class SettingsDialog(QDialog):
         self.auto_update = QCheckBox("Check for Clickwheel updates once a day")
         self.auto_update.setChecked(settings.check_for_updates)
         form.addRow(self.auto_update)
+        self.channel = QComboBox()
+        self.channel.addItem("Stable", "stable")
+        self.channel.addItem("Beta: early builds with new features (may have rough edges)", "beta")
+        self.channel.setCurrentIndex(max(0, self.channel.findData(
+            settings.update_channel or updater.default_channel())))
+        self.channel.setToolTip("Moving back to Stable from a beta takes effect at the next stable release.")
+        form.addRow("Updates", self.channel)
         self.parallel = QSpinBox(minimum=1, maximum=6, value=settings.parallel_downloads)
         form.addRow("Simultaneous downloads", self.parallel)
         self.cover = QSpinBox(minimum=300, maximum=2000, singleStep=100, value=settings.cover_size)
@@ -95,6 +105,7 @@ class SettingsDialog(QDialog):
         self.settings.prefer_album_versions = self.album_versions.isChecked()
         self.settings.rockbox_prefers_files = self.rockbox_files.isChecked()
         self.settings.check_for_updates = self.auto_update.isChecked()
+        self.settings.update_channel = self.channel.currentData()
         self.settings.theme = self.theme.currentData()
         self.settings.show_status_bar = self.status_bar.isChecked()
         apply_theme(QApplication.instance(), self.settings.theme)
@@ -132,6 +143,7 @@ class MainWindow(QMainWindow):
         # Edits on the iPod tab can also change the library (mirrored order, deletions).
         self.device_page.browser.library_edited.connect(self.library_page.refresh)
         self.device_page.browser.library_edited.connect(self.device_page.refresh_choices)
+        self.device_page.browser.contents_read.connect(self.library_page.set_device_contents)
         # The Zune HD gets its own tab (Linux only: it's reached over MTP through libusb).
         self.zune_page = (ZunePage(self.library, self.settings, self.podcasts, self.videos)
                           if sys.platform.startswith("linux") else None)
@@ -157,6 +169,7 @@ class MainWindow(QMainWindow):
         self.lcd = LcdDisplay()
         self.player = Player(BARS, self)
         self.player_bar = PlayerBar(self.player)
+        self.eq_panel = EqPanel()
         central = Backdrop()  # bubbles and sparkles behind the glass panels (Y2K)
         column = QVBoxLayout(central)
         column.setContentsMargins(6, 4, 6, 6)
@@ -165,17 +178,19 @@ class MainWindow(QMainWindow):
         column.addWidget(self.title_bar)
         column.addWidget(self.lcd)
         column.addWidget(self.player_bar)
+        column.addWidget(self.eq_panel)
         column.addWidget(tabs, 1)
         self.setCentralWidget(central)
         self._tabs = tabs
         self._wire_lcd(status)
         # HUD corner brackets on the display, the deck and every panel (Halo skin only).
-        panels = [self.lcd, self.player_bar] + [
+        panels = [self.lcd, self.player_bar, self.eq_panel] + [
             w for w in self.findChildren(QAbstractItemView) + self.findChildren(QGroupBox)
             if not isinstance(w, QHeaderView) and w.window() is self]  # not combo-box popups
         self._hud = [HudBrackets(w) for w in panels]
         self.restyle()
         self._keep_playback()
+        self._wire_equalizer()
 
         def sync_songs(page, paths):
             tabs.setCurrentWidget(page)  # show progress where syncs live
@@ -184,6 +199,7 @@ class MainWindow(QMainWindow):
         self.library_page.sync_requested.connect(lambda paths: sync_songs(self.device_page, paths))
         if self.zune_page is not None:
             self.library_page.zune_sync_requested.connect(lambda paths: sync_songs(self.zune_page, paths))
+        self.library_page.browse_requested.connect(lambda: tabs.setCurrentWidget(self.ytm_page))
 
         menu = self.menuBar().addMenu("&File")
         prefs = QAction("Settings…", self)
@@ -215,13 +231,48 @@ class MainWindow(QMainWindow):
                     original = tabs.tabText(i)
                     tabs.tabBar().setTabData(i, original)
                 tabs.setTabText(i, original.upper() if is_retro() else original)
-        for table in (self.library_page.table, self.ytm_page.table, self.podcasts_page.table,
-                      *(p.browser.table for p in self.device_pages)):
+        for table in (self.library_page.table, self.podcasts_page.table, *(p.browser.table for p in self.device_pages)):
             restyle_table(table)
+        self.ytm_page.restyle()
         self.player_bar.refresh_icons()
+        self.library_page.restyle()
+        for page in self.device_pages:
+            page.restyle()
         self.title_bar.setVisible(is_retro())
         for brackets in self._hud:
             brackets.setVisible(current_theme() == "halo")
+
+    def _wire_equalizer(self) -> None:
+        s, panel, player = self.settings, self.eq_panel, self.player
+        try:
+            player.equalizer.set(s.eq_gains, s.eq_preamp)
+        except (TypeError, ValueError):  # a hand-edited or older settings file: start flat
+            s.eq_gains, s.eq_preamp, s.eq_preset = [0.0] * 10, 0.0, "Flat"
+        panel.set_values(s.eq_enabled, s.eq_gains, s.eq_preamp, s.eq_preset)
+        player.set_equalizer(s.eq_enabled, s.eq_gains, s.eq_preamp)
+        panel.setVisible(s.show_equalizer)
+        self.player_bar.eq_btn.setChecked(s.show_equalizer)
+        save = QTimer(self, singleShot=True, interval=600, timeout=s.save)  # once a drag settles
+
+        def edited():
+            player.set_equalizer(panel.enabled, panel.gains, panel.preamp)
+            s.eq_enabled, s.eq_gains, s.eq_preamp, s.eq_preset = panel.enabled, panel.gains, panel.preamp, panel.preset
+            save.start()
+
+        def shown(visible: bool):
+            panel.setVisible(visible)
+            s.show_equalizer = visible
+            save.start()
+
+        def failed(message: str):
+            panel.set_values(False, panel.gains, panel.preamp, panel.preset)
+            s.eq_enabled = False
+            save.start()
+            self.statusBar().showMessage(message, 10000)
+
+        panel.changed.connect(edited)
+        self.player_bar.equalizer_toggled.connect(shown)
+        player.equalizer_failed.connect(failed)
 
     def _wire_lcd(self, status) -> None:
         lcd = self.lcd
@@ -254,6 +305,13 @@ class MainWindow(QMainWindow):
         player.spectrum.connect(lcd.set_spectrum)
         player.error.connect(lambda msg: self.statusBar().showMessage(msg, 8000))
         self.library_page.play_requested.connect(player.play_queue)
+
+        def shuffle(items):
+            player.set_shuffle(True)
+            self.player_bar.shuffle_btn.setChecked(True)
+            player.play_queue(items, random.randrange(len(items)))
+
+        self.library_page.shuffle_requested.connect(shuffle)
         for page in (self.library_page, self.device_page.browser):
             player.track_changed.connect(lambda item, page=page: page.set_now_playing(item.path if item else None))
         self.device_page.browser.play_requested.connect(player.play_queue)

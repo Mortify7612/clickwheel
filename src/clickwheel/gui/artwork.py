@@ -133,10 +133,31 @@ class CoverCache(QObject):
     def has(self, key: str) -> bool:
         return key in self._thumbs
 
+    def shutdown(self) -> None:
+        """Wait for covers still loading. Call before dropping the cache, so no worker thread
+        signals an object that's gone."""
+        self._pool.shutdown(wait=True)
+
     def clear(self) -> None:
         self._thumbs.clear()
         self._large.clear()
         self._missing.clear()
+
+
+class RemoteArt:
+    """A cover on the web, for :meth:`CoverCache.request` (fetched on its worker threads)."""
+
+    def __init__(self, url: str):
+        self.url = url
+
+    def load_png(self) -> bytes | None:
+        import requests
+
+        if not self.url:
+            return None
+        response = requests.get(self.url, timeout=20)
+        response.raise_for_status()
+        return response.content
 
 
 def album_key(album_artist: str, album: str) -> str:
@@ -174,6 +195,9 @@ class ArtPanel(QWidget):
             label.setWordWrap(True)
             label.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
             layout.addWidget(label)
+        self.footer = QVBoxLayout()  # room for a page's own extras under the caption
+        layout.addSpacing(6)
+        layout.addLayout(self.footer)
         layout.addStretch(1)
         self.setFixedWidth(LARGE + 8)
         self.setMinimumHeight(120)
@@ -205,8 +229,9 @@ class ArtPanel(QWidget):
 
     def _fit_cover(self) -> None:
         width = self.width() - 8
-        caption = sum(label.sizeHint().height() for label in (self.title, self.artist, self.album)
-                      if label.isVisible()) + 24
+        extras = [self.footer.itemAt(i).widget() for i in range(self.footer.count())]
+        caption = sum(w.sizeHint().height() for w in (self.title, self.artist, self.album, *extras)
+                      if w is not None and not w.isHidden()) + 30
         side = max(48, min(LARGE, width, self.height() - caption))
         self.cover.setFixedSize(side, side)
         self.cover.setPixmap(self._pixmap if side == self._pixmap.width()

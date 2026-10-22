@@ -32,12 +32,19 @@ class Settings:
     # Rockbox devices: mirror files instead of writing the Apple database.
     rockbox_prefers_files: bool = True
     check_for_updates: bool = True
+    update_channel: str = ""  # "stable" | "beta"; "" follows the build (beta builds stay on beta)
     show_status_bar: bool = False  # the LCD ticker already shows status messages
     theme: str = "retro"  # "retro" | "y2k" | "bliss" | "aqua" | "halo" | "system"
     # Zune tab: also sync music videos and downloaded podcast episodes.
     zune_sync_videos: bool = True
     zune_sync_podcasts: bool = True
     last_update_check: float = 0.0
+    # Playback equalizer (see equalizer.BANDS for the ten bands).
+    eq_enabled: bool = False
+    eq_gains: list[float] = field(default_factory=lambda: [0.0] * 10)
+    eq_preamp: float = 0.0
+    eq_preset: str = "Flat"
+    show_equalizer: bool = False
 
     @classmethod
     def load(cls) -> Settings:

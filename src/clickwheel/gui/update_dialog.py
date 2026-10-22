@@ -23,13 +23,15 @@ class UpdateDialog(QDialog):
         self.setWindowTitle("Update available")
         self.setMinimumSize(520, 380)
 
-        title = QLabel(f"<b>Clickwheel {release.version}</b> is available — you have {__version__}.")
+        beta = " (beta)" if release.prerelease else ""
+        title = QLabel(f"<b>Clickwheel {release.version}</b>{beta} is available — you have {__version__}.")
         notes = QTextBrowser()
         notes.setOpenExternalLinks(True)
         notes.setMarkdown(release.notes or "_No release notes._")
         self.status = QLabel()
         self.status.setWordWrap(True)
         self.progress = QProgressBar()
+        self.progress.setTextVisible(False)  # the status line above says how far along it is
         self.progress.hide()
 
         self.buttons = QDialogButtonBox()
@@ -102,4 +104,5 @@ def check_for_updates(parent, settings: Settings, *, manual: bool) -> None:
         if manual:
             QMessageBox.warning(parent, "Couldn't check for updates", message)
 
-    workers.run(updater.check, on_done=done, on_error=failed)
+    workers.run(updater.check, channel=settings.update_channel or updater.default_channel(),
+                on_done=done, on_error=failed)
