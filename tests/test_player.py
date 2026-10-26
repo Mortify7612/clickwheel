@@ -143,3 +143,32 @@ def test_equalizer_plays_through_the_sound_card(library, player):
     run_events(300)
     assert player.is_playing
     player.stop()
+
+
+def test_playback_follows_the_system_default_output(library, player):
+    """Connecting Bluetooth headphones (or picking another output in Sound settings) moves the music there."""
+    from PySide6.QtMultimedia import QMediaDevices
+
+    from clickwheel.equalizer import PRESETS
+    from clickwheel.gui.player import PlayItem
+
+    default = QMediaDevices.defaultAudioOutput()
+    others = [d for d in QMediaDevices.audioOutputs() if d != default]
+    if default.isNull() or not others:
+        pytest.skip("needs two sound devices")
+    player._output.setDevice(others[0])  # what was the default when the app started
+    player.set_volume(0.0)  # silent: this runs on real speakers
+    items = [PlayItem(library.root / t.relpath, t.title, t.artist) for t in library.tracks()]
+    player.play_queue(items, 0)
+    player.set_equalizer(True, PRESETS["Flat"], 0)
+    assert run_until(lambda: player._sink is not None and player._sink.processedUSecs() > 200_000, 8000)
+    old_sink = player._sink
+    player._devices.audioOutputsChanged.emit()  # macOS reports the new default
+    assert player._output.device() == default
+    assert player._sink is not old_sink
+    assert run_until(lambda: player._sink is not None and player._sink.processedUSecs() > 200_000, 8000)
+    assert player.is_playing
+    player.set_equalizer(False, PRESETS["Flat"], 0)  # Qt's own output is on the new default too
+    run_events(300)
+    assert player.is_playing
+    player.stop()

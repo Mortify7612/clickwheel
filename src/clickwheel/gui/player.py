@@ -139,6 +139,10 @@ class Player(QObject):
         self._player.playbackStateChanged.connect(self._on_state)
         self._player.positionChanged.connect(lambda ms: self.position_changed.emit(ms, self._player.duration()))
         self._player.errorOccurred.connect(lambda _e, msg: self.error.emit(msg or "Playback failed"))
+        # Qt keeps playing to whichever output was the default when it started; follow the
+        # system's choice instead, so connecting Bluetooth headphones moves the music to them.
+        self._devices = QMediaDevices(self)
+        self._devices.audioOutputsChanged.connect(self._follow_default_output)
 
     # ── Queue ────────────────────────────────────────────────────────────
 
@@ -316,7 +320,7 @@ class Player(QObject):
 
     def _open_sink(self, rate: int, channels: int) -> bool:
         self._close_sink()
-        device = QMediaDevices.defaultAudioOutput()
+        device = self._output.device()
         fmt = QAudioFormat()
         fmt.setSampleRate(rate)
         fmt.setChannelCount(channels)
@@ -379,6 +383,14 @@ class Player(QObject):
                 del self._backlog[:written]
 
     # ── Qt callbacks ─────────────────────────────────────────────────────
+
+    def _follow_default_output(self) -> None:
+        device = QMediaDevices.defaultAudioOutput()
+        if device.isNull() or device == self._output.device():
+            return
+        self._output.setDevice(device)  # Qt reopens its own output with the next decoded block
+        if self._sink_shape is not None:  # the equalized audio moves over too
+            self._open_sink(*self._sink_shape)
 
     def _on_buffer(self, buffer: QAudioBuffer) -> None:
         if self._eq_on:
